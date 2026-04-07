@@ -1,0 +1,30 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>capstone</name>
+  <version>0.0.0</version>
+  <description>Capstone Design</description>
+
+  <maintainer email="twkim@todo.todo">twkim</maintainer>
+  <license>MIT</license>
+
+  <!-- Build system -->
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <!-- Core C++ dependencies -->
+  <depend>rclcpp</depend>
+  <depend>std_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>custom_msgs</depend>
+
+  <!-- Other libraries -->
+  <depend>eigen3_cmake_module</depend>
+
+  <!-- Python -->
+  <exec_depend>python3</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
+ 
