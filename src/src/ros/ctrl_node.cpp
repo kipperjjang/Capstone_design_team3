@@ -26,8 +26,14 @@ CtrlNode::CtrlNode() : Node("control_node") {
 
 void CtrlNode::imuCallback(const sensor_msgs::msg::Imu::SharedPtr msg) {
   // Store and process imu data
+  if (first_imu_) {
+    last_imu_time_ = this->now();
+    first_imu_ = false;
+  }
+  const double dt = (this->now() - last_imu_time_).seconds();
+
   Eigen::Vector2d omega = toEigen(msg->angular_velocity).tail<2>();
-  estimator_.update(omega);
+  estimator_.update(omega, dt);
 }
 
 void CtrlNode::visionCallback(const custom_msgs::msg::VisionMsg::SharedPtr msg) {

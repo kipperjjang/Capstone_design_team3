@@ -4,7 +4,7 @@ controller:
   Kp:                               [200.0,200.0]
   Kd:                               [5.0,5.0]
   
-  frequency:                        100
+  frequency:                        1000
   time_delay:                       0.1         # Expected time delay during fire (s)
 
   err_p_track:                      1e-3        # Error threshold for tracking, position  (pixel)
@@ -14,11 +14,14 @@ controller:
 
 # Estimator parameters 
 estimator:
-  q_acc:                  50.0
-  r_detected:             4.0
-  r_tracked:              16.0
-  p0_pos:                 10.0
-  p0_vel:                 100.0
+  q_acc:                  10000.0
+  r_detected:             900.0
+  r_tracked:              900.0
+  r_temp_vel:             100.0
+  r_temp_acc:             1000.0
+  p0_pos:                 900.0
+  p0_vel:                 900.0
+  p0_acc:                 4000.0
   max_time_gap:           0.5
   late_tolerance:         0.002
 

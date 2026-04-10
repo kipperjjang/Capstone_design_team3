@@ -19,6 +19,6 @@ ControlConfig ControlConfig::load(const std::string &path) {
   config.Kp = Eigen::Vector2d(Kp_diag[0],  Kp_diag[1]).asDiagonal();
   config.Kd = Eigen::Vector2d(Kd_diag[0],  Kd_diag[1]).asDiagonal();
 
-  config.controller_hz = file["frequency"].as<double>();
+  config.hz = file["frequency"].as<double>();
   return config;
 }

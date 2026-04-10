@@ -4,6 +4,8 @@
 #include "data/state/robot_state.hpp"
 #include "estimator/kalman_filter.hpp"
 
+#include "utils/lpf.hpp"
+
 class Estimator {
 public:
   Estimator(const EstimatorConfig &config)
@@ -13,11 +15,11 @@ public:
 
   void update(const RobotState &state);
   void update(const double t);
-  void update(const Eigen::Vector2d &omega);
+  void update(const Eigen::Vector2d &omega, const double dt);
 
   // Utils
-  const RobotState& getState();
-  bool isInitialized() { return initialized_; }
+  const RobotState& getState(bool isProcess);
+  bool isInitialized() const { return initialized_; }
 
 private:
   // Configuration
@@ -26,7 +28,7 @@ private:
   // State
   RobotState state_;
   bool initialized_{false};
-  double last_filter_time_{0.0};
+  double last_measurement_time_{0.0};
 
   // Kalman Filter
   KalmanFilter kf_;

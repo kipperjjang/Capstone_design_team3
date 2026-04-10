@@ -22,7 +22,7 @@ void Controller::run(const ControlState &state) {
     case FSMState::TRACK:
       // Compute error
       Eigen::Vector2d err_p = p - config_.img_center;
-      Eigen::Vector2d err_v = lpf(err_p, dt);
+      Eigen::Vector2d err_v = lpf(err_p, error_.p, config_.hz/10, dt);
       error_.p = err_p;
       error_.v = err_v;
 
@@ -33,7 +33,7 @@ void Controller::run(const ControlState &state) {
       Eigen::Vector2d v_bell = error_.v + v_cam_;
       Eigen::Vector2d p_aim = p + v_bell * config_.time_delay;
       Eigen::Vector2d err_aim_p = p_aim - config_.img_center;
-      Eigen::Vector2d err_aim_v = lpf(err_aim_p, dt);
+      Eigen::Vector2d err_aim_v = lpf(err_aim_p, error_aim_.p, config_.hz/10, dt);
 
       Eigen::Vector2d u = config_.K * err_aim_p + config_.D * err_aim_v;
       u_.update(u, false, false);
@@ -48,8 +48,4 @@ void Controller::run(const ControlState &state) {
     default:
       break;
   }
-}
-
-Eigen::Vector2d Controller::lpf(const Eigen::Vector2d &value, double dt) {
-  return;
 }

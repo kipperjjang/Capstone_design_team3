@@ -25,7 +25,9 @@ private:
   rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr imu_sub_;
   rclcpp::Publisher<custom_msgs::msg::ControlMsg>::SharedPtr ctrl_pub_;
   rclcpp::TimerBase::SharedPtr timer_;
-  rclcpp::Time last_msg_time_;
+  
+  rclcpp::Time last_imu_time_;
+  bool first_imu_{true};
 
   // Sub-modules
   Estimator estimator_;

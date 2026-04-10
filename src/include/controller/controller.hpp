@@ -6,6 +6,8 @@
 #include "data/state/fsm_state.hpp"
 #include "controller/fsm.hpp"
 
+#include "utils/lpf.hpp"
+
 class Controller {
 public:
   Controller(const ControlConfig &config) : config_(config) {

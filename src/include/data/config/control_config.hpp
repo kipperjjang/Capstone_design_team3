@@ -6,7 +6,7 @@ struct ControlConfig {
   Eigen::Vector2d img_center; // Pixel of the center of the image
   Eigen::Matrix2d K, D;       // PD coefficient  
 
-  double controller_hz;       // Controller node frequency
+  double hz;                  // Node frequency
   double time_delay;          // Expected time delay during fire
   double max_time_gap;        // Maximum time gap between vision message
 
