@@ -1,0 +1,5 @@
+# YOLO weights
+*.pt
+
+# pacache
+/__pycache__

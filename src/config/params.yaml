@@ -1,15 +1,20 @@
+# vision YOLO parameters
+vision:
+  target_class:           1
+  confidence:             0.2
+
 # Controller parameters 
 controller:
-  image_center:                     [0.0, 0.0]
-  Kp:                               [200.0,200.0]
-  Kd:                               [5.0,5.0]
+  image_center:           [0.0, 0.0]
+  Kp:                     [200.0,200.0]
+  Kd:                     [5.0,5.0]
   
-  frequency:                        1000
-  time_delay:                       0.1         # Expected time delay during fire (s)
+  frequency:              2000
+  time_delay:             0.1         # Expected time delay during fire (s)
 
-  err_p_track:                      1e-3        # Error threshold for tracking, position  (pixel)
-  err_v_track:                      1e-3        # Error threshold for tracking, velocity  (pixel/s)
-  err_p_fire:                       1e-3        # Error threshold for aim, position       (pixel)
+  err_p_track:            1e-3        # Error threshold for tracking, position  (pixel)
+  err_v_track:            1e-3        # Error threshold for tracking, velocity  (pixel/s)
+  err_p_fire:             1e-3        # Error threshold for aim, position       (pixel)
 
 
 # Estimator parameters 

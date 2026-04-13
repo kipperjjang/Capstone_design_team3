@@ -3,31 +3,52 @@ from cv_bridge import CvBridge
 import cv2
 from ultralytics import YOLO
 
+import numpy as np
+import yaml
 import rclpy
 from rclpy.node import Node
 from rclpy.executors import SingleThreadedExecutor
 
-import time
-import yaml
-import numpy as np
-
 from custom_msgs.msg import VisionMsg
+from sensor_msgs.msg import Image
 
 class VisionNode(Node):
-  def __init__(self, yolo_model_path):
+  def __init__(self):
     super().__init__('vision_node')
+    self.declare_parameter('publish_image', True)
+    self.declare_parameter('image_topic', '/vision/image')
+    self.declare_parameter('config_path', '')
+    self.declare_parameter('yolo_model_path', 'yolo_models/robot_yolo_p4_416_combine/weights/best.pt')
+  
+    # Load configuration
+    self.yolo_model_path = self.get_parameter('yolo_model_path').get_parameter_value().string_value
+    self.loadYAML(self.get_parameter('config_path').get_parameter_value().string_value)
+    self.publish_image = self.get_parameter('publish_image').value
+    self.image_topic = self.get_parameter('image_topic').value
+
     # OpenCV
     self.bridge = CvBridge()
     self.capture = cv2.VideoCapture(0) # /dev/video0
     self.isDetected = False
+    self.img = None
 
     # YOLO
-    self.model = YOLO(yolo_model_path)
+    self.model = YOLO(self.yolo_model_path)
     # np.array for relative positions of detected object with respect to the center of image
     self.rel_pos = np.empty((2,2))
+    self.bbox = np.zeros(2)
 
     # ROS Publisher
     self.state_pub = self.create_publisher(VisionMsg, '/vision', 10)
+    self.image_pub = None
+    if self.publish_image:
+      self.image_pub = self.create_publisher(Image, self.image_topic, 10)
+
+  def loadYAML(self, path):
+    with open(path, 'r') as f:
+      config = yaml.safe_load(f)
+    self.target_class = config['vision']['target_class']
+    self.confidence = config['vision']['confidence']
 
   def readImg(self):
     ret, frame = self.capture.read()
@@ -38,13 +59,14 @@ class VisionNode(Node):
     self.frame_center = np.array([width // 2, height // 2])
 
     self.img = frame
+    return True
 
   def detectBell(self):
     # Classes : pillar [0] / bell [1]
-    TARGET_CLASSES = (1) # TODO : config로 confidence score 및 고려할 class 설정할 수 있게 변경.
+    TARGET_CLASSES = (1)
 
     # Inference only for the classes in TARGET_CLASSES
-    results = model(frame, conf=0.2, classes=list(TARGET_CLASSES), verbose=False)
+    results = self.model(self.img, conf=self.confidence, classes=list(TARGET_CLASSES), verbose=False)
     r = results[0]
     boxes = r.boxes
 
@@ -80,7 +102,7 @@ class VisionNode(Node):
       relative_x = (obj_center_x - self.frame_center[0]) # / self.frame_center[0]
       relative_y = (obj_center_y - self.frame_center[1]) # / self.frame_center[1]
 
-      cls_name = model.names[cls_id]
+      cls_name = self.model.names[cls_id]
       score = conf[i]
 
       self.rel_pos[cls_id, 0] = relative_x
@@ -99,9 +121,21 @@ class VisionNode(Node):
 
   def publish(self):
     # Publish pose
+    stamp = self.get_clock().now().to_msg()
+
     msg = VisionMsg()
+    msg.header.stamp = stamp
+    msg.detected = self.isDetected
+    msg.p = self.rel_pos[0]
+    msg.confidence = self.confidence
+
     # data ...
     self.state_pub.publish(msg)
+
+    if self.publish_image and self.img is not None:
+      image_msg = self.bridge.cv2_to_imgmsg(self.img, encoding='bgr8')
+      image_msg.header.stamp = stamp
+      self.image_pub.publish(image_msg)
 
   def run(self):
     exec = SingleThreadedExecutor()
@@ -109,7 +143,8 @@ class VisionNode(Node):
 
     while (rclpy.ok()):
       # Read Image
-      self.readImg()
+      if not self.readImg():
+        continue
 
       # Run Detection or Tracking
       if self.isDetected:
@@ -128,8 +163,6 @@ class VisionNode(Node):
 
 # Run simulation node
 if __name__ == "__main__":
-  yolo_model_path = "yolo_models/robot_yolo_p4_416_combine/weights/best.pt"
-
   rclpy.init()
-  sim = VisionNode(yolo_model_path=yolo_model_path)
+  sim = VisionNode()
   sim.run()

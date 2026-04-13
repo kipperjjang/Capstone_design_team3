@@ -2,6 +2,7 @@
 from collections import deque
 import math
 
+from cv_bridge import CvBridge
 import cv2
 import numpy as np
 import rclpy
@@ -9,6 +10,7 @@ from rclpy.node import Node
 
 from custom_msgs.msg import TestDebug
 from custom_msgs.msg import VisionMsg
+from sensor_msgs.msg import Image
 
 
 class TestVisualizer(Node):
@@ -22,6 +24,8 @@ class TestVisualizer(Node):
     self.declare_parameter('label_stride', 10)
     self.declare_parameter('use_test_vision', True)
     self.declare_parameter('vision_topic', '/vision')
+    self.declare_parameter('image_topic', '/vision/image')
+    self.declare_parameter('visualize_on_image', False)
     self.declare_parameter('use_fixed_view', True)
     self.declare_parameter('view_min_x', 0.0)
     self.declare_parameter('view_max_x', 640.0)
@@ -34,6 +38,8 @@ class TestVisualizer(Node):
     self.declare_parameter('test_amplitude_y', 80.0)
     self.declare_parameter('test_frequency_hz', 0.5)
     self.declare_parameter('test_position_noise_std', 30.0)
+    self.declare_parameter('overlay_trail_length', 10)
+    self.declare_parameter('image_unsync_tolerance_sec', 0.1)
 
     self.debug_topic = self.get_parameter('debug_topic').value
     self.width = self.get_parameter('width').value
@@ -42,6 +48,8 @@ class TestVisualizer(Node):
     self.label_stride = max(1, self.get_parameter('label_stride').value)
     self.use_test_vision = self.get_parameter('use_test_vision').value
     self.vision_topic = self.get_parameter('vision_topic').value
+    self.image_topic = self.get_parameter('image_topic').value
+    self.visualize_on_image = self.get_parameter('visualize_on_image').value
     self.use_fixed_view = self.get_parameter('use_fixed_view').value
     self.view_min_x = self.get_parameter('view_min_x').value
     self.view_max_x = self.get_parameter('view_max_x').value
@@ -54,11 +62,16 @@ class TestVisualizer(Node):
     self.test_amplitude_y = self.get_parameter('test_amplitude_y').value
     self.test_frequency_hz = self.get_parameter('test_frequency_hz').value
     self.test_position_noise_std = self.get_parameter('test_position_noise_std').value
+    self.overlay_trail_length = max(1, self.get_parameter('overlay_trail_length').value)
+    self.image_unsync_tolerance_sec = self.get_parameter('image_unsync_tolerance_sec').value
 
+    self.bridge = CvBridge()
     self.raw_history = deque(maxlen=self.history_size)
     self.true_history = deque(maxlen=self.history_size)
     self.kf_history = deque(maxlen=self.history_size)
     self.latest_control = None
+    self.latest_image = None
+    self.latest_image_stamp = None
     self.test_vision_start_time = self.get_clock().now()
     self.last_test_position = None
     self.last_test_sample_time = None
@@ -69,6 +82,11 @@ class TestVisualizer(Node):
       TestDebug,
       self.debug_topic,
       self.debugCallback,
+      10)
+    self.image_sub = self.create_subscription(
+      Image,
+      self.image_topic,
+      self.imageCallback,
       10)
     self.vision_pub = self.create_publisher(VisionMsg, self.vision_topic, 10)
 
@@ -155,6 +173,11 @@ class TestVisualizer(Node):
 
     if msg.has_control:
       self.latest_control = msg
+
+  def imageCallback(self, msg):
+    self.latest_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
+    self.latest_image_stamp = (
+      float(msg.header.stamp.sec) + float(msg.header.stamp.nanosec) * 1e-9)
 
   def appendRawSample(self, sample_time, position, velocity):
     if self.time_origin is None:
@@ -274,6 +297,100 @@ class TestVisualizer(Node):
       cv2.line(image, previous_pixel, pixel, color, 1, cv2.LINE_AA)
       previous_pixel = pixel
 
+  def drawOverlayTrail(self, image, samples, color):
+    if len(samples) < 2:
+      return
+
+    previous_point = None
+    for point in samples:
+      pixel = (int(round(point[0])), int(round(point[1])))
+      if previous_point is not None:
+        cv2.line(image, previous_point, pixel, color, 1, cv2.LINE_AA)
+      previous_point = pixel
+
+  def drawOverlayPoint(self, image, point, color, label, sample_time, offset):
+    pixel = (int(round(point[0])), int(round(point[1])))
+    cv2.circle(image, pixel, 5, color, -1)
+    text = f'{label} (t={self.relativeTime(sample_time):.2f}s)'
+    cv2.putText(
+      image, text, (pixel[0] + offset[0], pixel[1] + offset[1]),
+      cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1, cv2.LINE_AA)
+
+  def buildOverlayImage(self):
+    if self.latest_image is None:
+      return None
+
+    canvas = self.latest_image.copy()
+    trail_count = min(self.overlay_trail_length, len(self.raw_history), len(self.kf_history))
+
+    if trail_count > 1:
+      raw_trail = [point for _, point, _ in list(self.raw_history)[-trail_count:]]
+      self.drawOverlayTrail(canvas, raw_trail, (120, 200, 120))
+
+    kf_trail_samples = list(self.kf_history)[-self.overlay_trail_length:]
+    if len(kf_trail_samples) > 1:
+      kf_trail = [point for _, point, _ in kf_trail_samples]
+      self.drawOverlayTrail(canvas, kf_trail, (200, 120, 120))
+
+    if self.raw_history:
+      raw_time, raw_point, _ = self.raw_history[-1]
+      self.drawOverlayPoint(canvas, raw_point, (0, 180, 0), 'raw', raw_time, (8, -8))
+
+    latest_filtered = next(
+      ((sample_time, point) for sample_time, point, predicted_only in reversed(self.kf_history) if not predicted_only),
+      None)
+    if latest_filtered is not None:
+      self.drawOverlayPoint(canvas, latest_filtered[1], (255, 0, 0), 'kf', latest_filtered[0], (8, 16))
+
+    latest_prediction = next(
+      ((sample_time, point) for sample_time, point, predicted_only in reversed(self.kf_history) if predicted_only),
+      None)
+    if latest_prediction is not None:
+      self.drawOverlayPoint(canvas, latest_prediction[1], (0, 0, 255), 'pred', latest_prediction[0], (8, 36))
+
+    debug_time_candidates = []
+    if self.raw_history:
+      debug_time_candidates.append(self.raw_history[-1][0])
+    if self.kf_history:
+      debug_time_candidates.append(self.kf_history[-1][0])
+    if self.latest_image_stamp is not None and debug_time_candidates:
+      debug_time = max(debug_time_candidates)
+      if abs(self.latest_image_stamp - debug_time) > self.image_unsync_tolerance_sec:
+        cv2.putText(
+          canvas, 'image/debug unsynced', (16, 28),
+          cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 0, 255), 2, cv2.LINE_AA)
+
+    return canvas
+
+  def composeImagePanel(self, overlay_image, rect):
+    left, top, right, bottom = rect
+    panel = np.full((bottom - top, right - left, 3), 245, dtype=np.uint8)
+    if overlay_image is None:
+      cv2.putText(
+        panel, 'Waiting for /vision/image ...', (20, panel.shape[0] // 2),
+        cv2.FONT_HERSHEY_SIMPLEX, 0.75, (90, 90, 90), 2, cv2.LINE_AA)
+      cv2.putText(
+        panel, 'Plots remain active without image input.', (20, panel.shape[0] // 2 + 34),
+        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (110, 110, 110), 1, cv2.LINE_AA)
+      return panel
+
+    image_h, image_w = overlay_image.shape[:2]
+    scale = min(panel.shape[1] / max(1, image_w), panel.shape[0] / max(1, image_h))
+    resized_size = (
+      max(1, int(round(image_w * scale))),
+      max(1, int(round(image_h * scale))))
+    resized = cv2.resize(overlay_image, resized_size, interpolation=cv2.INTER_LINEAR)
+    x_offset = (panel.shape[1] - resized.shape[1]) // 2
+    y_offset = (panel.shape[0] - resized.shape[0]) // 2
+    panel[y_offset:y_offset + resized.shape[0], x_offset:x_offset + resized.shape[1]] = resized
+    return panel
+
+  def drawBlankSpatialPanel(self, image, raw_window, kf_window, true_period, min_xy, max_xy, rect):
+    cv2.rectangle(image, (rect[0], rect[1]), (rect[2], rect[3]), (220, 220, 220), 1)
+    self.drawTrueTrajectory(image, true_period, min_xy, max_xy, rect)
+    self.drawTargetWindow(image, raw_window, min_xy, max_xy, rect)
+    self.drawKalmanWindow(image, kf_window, min_xy, max_xy, rect)
+
   def drawKalmanWindow(self, image, kf_window, min_xy, max_xy, rect):
     for sample_time, point, predicted_only in kf_window:
       pixel = self.toPixel(point, min_xy, max_xy, rect)
@@ -343,27 +460,29 @@ class TestVisualizer(Node):
   def drawLegend(self, image):
     target_label = 'noisy target samples' if self.use_test_vision and self.test_position_noise_std > 0.0 else 'target current/prev'
     cv2.putText(image, target_label, (20, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 150, 0), 2)
-    cv2.putText(image, 'true trajectory', (20, 55), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (180, 180, 180), 2)
+    cv2.putText(image, 'true trajectory / image trail', (20, 55), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (180, 180, 180), 2)
     cv2.putText(image, 'kalman filter', (20, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
     cv2.putText(image, 'prediction only', (20, 105), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
     mode = 'synthetic vision' if self.use_test_vision else 'real vision'
     cv2.putText(image, f'mode: {mode}', (20, 130), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (70, 70, 70), 1)
-    view_mode = 'fixed view' if self.use_fixed_view else 'tracking view'
-    cv2.putText(image, view_mode, (20, 155), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (70, 70, 70), 1)
-    cv2.putText(image, 'time is relative to first target sample', (20, 180),
+    panel_mode = 'panel: image overlay' if self.visualize_on_image else 'panel: blank plot'
+    cv2.putText(image, panel_mode, (20, 155), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (70, 70, 70), 1)
+    image_mode = f'image topic: {self.image_topic}'
+    cv2.putText(image, image_mode, (20, 180), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (70, 70, 70), 1)
+    cv2.putText(image, 'time is relative to first target sample', (20, 205),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.55, (70, 70, 70), 1)
 
     if self.use_fixed_view:
       bounds_text = (
         f'view x:[{self.view_min_x:.0f}, {self.view_max_x:.0f}] '
         f'y:[{self.view_min_y:.0f}, {self.view_max_y:.0f}]')
-      cv2.putText(image, bounds_text, (20, 205), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (70, 70, 70), 1)
+      cv2.putText(image, bounds_text, (20, 230), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (70, 70, 70), 1)
 
     if self.latest_control is not None:
       text = (
         f'u=({self.latest_control.u_yaw:.3f}, {self.latest_control.u_pitch:.3f}) '
         f'fire={self.latest_control.fire} reload={self.latest_control.reload}')
-      control_y = 230 if self.use_fixed_view else 205
+      control_y = 255 if self.use_fixed_view else 230
       cv2.putText(image, text, (20, control_y), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (70, 70, 70), 1)
 
   def draw(self):
@@ -400,10 +519,13 @@ class TestVisualizer(Node):
     time_x_rect = (plot_left, top_y, self.width - 60, mid_y)
     time_y_rect = (plot_left, mid_y + plot_gap, self.width - 60, bottom_y)
 
-    cv2.rectangle(image, (spatial_rect[0], spatial_rect[1]), (spatial_rect[2], spatial_rect[3]), (220, 220, 220), 1)
-    self.drawTrueTrajectory(image, true_period, min_xy, max_xy, spatial_rect)
-    self.drawTargetWindow(image, raw_window, min_xy, max_xy, spatial_rect)
-    self.drawKalmanWindow(image, kf_window, min_xy, max_xy, spatial_rect)
+    if self.visualize_on_image:
+      cv2.rectangle(image, (spatial_rect[0], spatial_rect[1]), (spatial_rect[2], spatial_rect[3]), (220, 220, 220), 1)
+      overlay_image = self.buildOverlayImage()
+      panel = self.composeImagePanel(overlay_image, spatial_rect)
+      image[spatial_rect[1]:spatial_rect[3], spatial_rect[0]:spatial_rect[2]] = panel
+    else:
+      self.drawBlankSpatialPanel(image, raw_window, kf_window, true_period, min_xy, max_xy, spatial_rect)
 
     self.drawTimeValuePlot(image, raw_period, kf_period, true_period, period, time_x_rect, 0, 'x')
     self.drawTimeValuePlot(image, raw_period, kf_period, true_period, period, time_y_rect, 1, 'y')
