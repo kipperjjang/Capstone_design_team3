@@ -1,13 +1,17 @@
 # Capstone_design_team3
 
 ## Quick Start
-After clone this directory, on the ros2 workspace
+To clone ros2 package only, follow the commands below
 ```
-colcon build --packages-up-to capstone
+# Clone structure only; no data
+git clone --filter=blob:none --no-checkout https://github.com/kipperjjang/Capstone_design_team3.git
+cd Capstone_design_team3
 
-source ~/ros2_ws/install/setup.bash
-
-ros2 launch capstone test_launch.py
+# Set directories to clone and pull
+git sparse-checkout init --cone
+git sparse-checkout set README.md custom_msgs src
+git checkout origin/main
 ```
-Only test estimator performance.
-Can change the frequency and other parameters in ```test_visualizer.py``` or ```config/params.yaml```
+If already tracks ros2 packages, run lower codes only.
+
+Currently KF fixed into angle based state, therefore current estimator cannot be tested with current code.
