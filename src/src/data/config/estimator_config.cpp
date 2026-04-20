@@ -9,25 +9,27 @@ EstimatorConfig EstimatorConfig::load(const std::string &path) {
   }
 
   const YAML::Node file = YAML::LoadFile(path);
-  const YAML::Node estimator = file["estimator"];
-  if (!estimator) {
+  const YAML::Node kalman = file["estimator"]["kalman"];
+  if (!kalman) {
     return config;
   }
+  
+  config.hz = file["controller"]["frequency"].as<double>();
 
-  if (estimator["q_acc"]) config.q_acc = estimator["q_acc"].as<double>();
-  if (estimator["r_detected"]) config.r_detected = estimator["r_detected"].as<double>();
-  if (estimator["r_tracked"]) config.r_tracked = estimator["r_tracked"].as<double>();
-  if (estimator["r_temp_vel"]) config.r_temp_vel = estimator["r_temp_vel"].as<double>();
-  if (estimator["r_temp_acc"]) config.r_temp_acc = estimator["r_temp_acc"].as<double>();
-  if (estimator["p0_pos"]) config.p0_pos = estimator["p0_pos"].as<double>();
-  if (estimator["p0_vel"]) config.p0_vel = estimator["p0_vel"].as<double>();
-  if (estimator["p0_acc"]) config.p0_acc = estimator["p0_acc"].as<double>();
-  if (estimator["max_time_gap"]) config.max_time_gap = estimator["max_time_gap"].as<double>();
-  if (estimator["hz"]) {
-    config.hz = estimator["hz"].as<double>();
-  } else if (file["controller"] && file["controller"]["frequency"]) {
-    config.hz = file["controller"]["frequency"].as<double>();
-  }
+  config.focal_length = file["estimator"]["camera"]["focal_length"].as<double>();
+  config.q_acc = kalman["q_acc"].as<double>();
+  config.r_detected = kalman["r_detected"].as<double>();
+  config.r_tracked = kalman["r_tracked"].as<double>();
+  config.r_temp_vel = kalman["r_temp_vel"].as<double>();
+  // config.r_temp_acc = kalman["r_temp_acc"].as<double>();
+
+  config.r_angle = kalman["r_angle"].as<double>();
+  config.r_omega = kalman["r_omega"].as<double>();
+
+  config.p0_pos = kalman["p0_pos"].as<double>();
+  config.p0_vel = kalman["p0_vel"].as<double>();
+  config.p0_acc = kalman["p0_acc"].as<double>();
+  config.max_time_gap = kalman["max_time_gap"].as<double>();
 
   return config;
 }

@@ -5,7 +5,7 @@
 #include "controller/controller.hpp"
 
 #include "custom_msgs/msg/control_msg.hpp"
-#include "custom_msgs/msg/imu_msg.hpp"
+#include "custom_msgs/msg/joint_msg.hpp"
 
 class BridgeNode : public rclcpp::Node {
 public:
@@ -16,16 +16,15 @@ private:
   void controlCallback(const custom_msgs::msg::ControlMsg::SharedPtr msg);
   
   // Utils
-  bool readIMUframe();
+  bool readSerialFrame();
   
   // ROS
   rclcpp::Subscription<custom_msgs::msg::ControlMsg>::SharedPtr control_sub_;
-  rclcpp::Publisher<custom_msgs::msg::ImuMsg>::SharedPtr imu_pub_;         // IMU data
+  rclcpp::Publisher<custom_msgs::msg::JointMsg>::SharedPtr joint_pub_;
   
   // Serial
-  std::vector<Serial> serials_;
-  std::vector<uint8_t> buffer_;
+  std::vector<Serial> input_;     // Input port for reading
+  std::vector<Serial> output_;    // Output port for writing
 
-  // Data
-  sensor_msgs::msg::Imu imu_;
+  std::vector<uint8_t> buffer_;
 };

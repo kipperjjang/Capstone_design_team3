@@ -1,14 +1,13 @@
 #include "controller/controller.hpp"
 
-void Controller::run(const ControlState &state) {
+// Angle state KF based controller
+void Controller::run(const RobotState &state) {
   state_ = state;
   const double t = state.t;
   const double dt = state.dt;
   const bool detected = state.detected;
   const bool tracked = state.tracked;
   const bool process = state.process;
-  const Eigen::Vector2d p = state.p;
-  const Eigen::Vector2d v = state.v;
 
   // Update FSM State
   fsm_->update(state);
@@ -20,22 +19,31 @@ void Controller::run(const ControlState &state) {
       u_.update(Eigen::Vector2d::Zero(), false, false);
       break;
     case FSMState::TRACK:
-      // Compute error
-      Eigen::Vector2d err_p = p - config_.img_center;
-      Eigen::Vector2d err_v = lpf(err_p, error_.p, config_.hz/10, dt);
-      error_.p = err_p;
-      error_.v = err_v;
+      // Control 1. Give desired joint angle
+      Eigen::Vector2d u = state.angle;
 
-      Eigen::Vector2d u = config_.K * err_p + config_.D * err_v;
+      // Control 2. Give error dynamics; desired joint velocity
+      state.e = state.angle - state.joint;
+      Eigen::Vector2d u = state.omega + config_.Kp * state.e; 
+
       u_.update(u, false, false);
       break;
     case FSMState::AIM:
-      Eigen::Vector2d v_bell = error_.v + v_cam_;
-      Eigen::Vector2d p_aim = p + v_bell * config_.time_delay;
-      Eigen::Vector2d err_aim_p = p_aim - config_.img_center;
-      Eigen::Vector2d err_aim_v = lpf(err_aim_p, error_aim_.p, config_.hz/10, dt);
+      // Predict bell position
+      Eigen::Vector2d v_bell = state.omega;
+      Eigen::Vector2d p_pred = state.angle + v_bell * config_.time_delay;
 
-      Eigen::Vector2d u = config_.K * err_aim_p + config_.D * err_aim_v;
+      // Add offset for projectile motion and disturbance compensation
+      Eigen::Vector2d p_aim = p_pred + offset;
+
+
+      // Control 1. Give desired joint angle
+      Eigen::Vector2d u = p_aim;
+
+      // Control 2. Give error dynamics; desired joint velocity
+      state.e = p_aim - state.joint;
+      Eigen::Vector2d u = state.omega + config_.Kp * state.e;
+
       u_.update(u, false, false);
 
       // Shooting condition satisfied

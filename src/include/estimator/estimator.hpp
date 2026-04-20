@@ -13,15 +13,15 @@ public:
 
   void init(const RobotState &state);
 
-  void update(const RobotState &state);
-  void update(const double t);
-  void update(const Eigen::Vector2d &omega, const double dt);
+  void update(const RobotState &state);       // Vision input
+  void update(const double t);                // Process prediction
+  void update(const Eigen::Vector2d &joint, const Eigen::Vector2d &joint_vel, const double dt); // Joint update
 
   // Utils
   const RobotState& getState(bool isProcess);
   bool isInitialized() const { return initialized_; }
 
-private:
+private: 
   // Configuration
   EstimatorConfig config_;
 

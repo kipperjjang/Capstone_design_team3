@@ -11,7 +11,7 @@ public:
     fsm_state_ = FSMState::SEARCH;
   }
 
-  void update(const ControlState &state);
+  void update(const RobotState &state);
 
   // Utils
   FSMState getFSMState() const { return fsm_state_; }

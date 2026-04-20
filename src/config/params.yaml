@@ -19,22 +19,41 @@ controller:
 
 # Estimator parameters 
 estimator:
-  q_acc:                  10000.0
-  r_detected:             900.0
-  r_tracked:              900.0
-  r_temp_vel:             100.0
-  r_temp_acc:             1000.0
-  p0_pos:                 900.0
-  p0_vel:                 900.0
-  p0_acc:                 4000.0
-  max_time_gap:           0.5
-  late_tolerance:         0.002
+  camera:
+    focal_length:           0.01
+  kalman:
+    q_acc:                  10000.0
+    r_detected:             900.0
+    r_tracked:              900.0
+    r_temp_vel:             100.0
+    # r_temp_acc:             1000.0
+
+    r_angle:                0.0025
+    r_omega:                0.01
+
+    p0_pos:                 900.0
+    p0_vel:                 900.0
+    p0_acc:                 4000.0
+    max_time_gap:           0.5
+    late_tolerance:         0.002
+
 
 bridge:
   serial:
-    port:                 "/dev/ttyUSB0"
-    baud:                 115200
-    data_bits:            8
-    stop_bits:            1
-    parity:               0
+    input:
+      name:               ["joint0", "joint1"]
+      port:               ["/dev/ttyUSB0", "/dev/ttyUSB1"]  # Joint data from encoder
+      baud:               [115200, 115200]
+      data_bits:          [8, 8]
+      stop_bits:          [1, 1]
+      parity:             [0, 0]
+      
+    output:
+      name:               ["yaw", "pitch"]
+      port:               ["/dev/ttyUSB3", "/dev/ttyUSB4"]  # Write joint data to motor
+      baud:               [115200, 115200]
+      data_bits:          [8, 8]
+      stop_bits:          [1, 1]
+      parity:             [0, 0]
+    
     watchdog_frequency:   1000

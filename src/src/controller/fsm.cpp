@@ -1,13 +1,11 @@
 #include "controller/fsm.hpp"
 
-void FSM::update(const ControlState &state) {
+void FSM::update(const RobotState &state) {
   const double t = state.t;
   const double dt = state.dt;
   const bool detected = state.detected;
   const bool tracked = state.tracked;
   const bool process = state.process;
-  const Eigen::Vector2d p = state.p;
-  const Eigen::Vector2d v = state.v;
   
   // Handle based on the current state
   switch (fsm_state_) {
@@ -18,9 +16,11 @@ void FSM::update(const ControlState &state) {
 
     case FSMState::TRACK:
       // Aim the target
-      const double err_p = (p - config_.img_center).norm();
+      const double err_p = state.e.norm();
       if (err_p < config_.err_p_track) fsm_state_ = FSMState::AIM;
       
+
+
       // Failed to track or time is too old
       if (!detected || !tracked || dt > config_.max_time_gap) fsm_state_ = FSMState::SEARCH;
       break;
@@ -33,7 +33,7 @@ void FSM::update(const ControlState &state) {
       // if (!is_stable) state_ = FSMState::SEARCH;
       
       // AIM->RELOAD when shot is fired
-      const double err_p = (p - config_.img_center).norm();
+      const double err_p = state.e.norm();
       if (err_p < config_.err_p_fire) fsm_state_ = FSMState::RELOAD;
       break;
       

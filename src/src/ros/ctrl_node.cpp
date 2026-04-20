@@ -12,11 +12,11 @@ CtrlNode::CtrlNode() : Node("control_node") {
   // Initilaize
   estimator_ = Estimator(estimator_config);
   controller_ = Controller(controller_config);
+  joint_ = Eigen::Vector4d::Zero();
 
   // Subscriber and Publisher
   vision_sub_ = this->create_subscription<custom_msgs::msg::VisionMsg>("/vision", 1, std::bind(&CtrlNode::visionCallback, this, _1));
-  imu_sub_ = this->create_subscription<sensor_msgs::msg::Imu>("/imu", 1, std::bind(&CtrlNode::imuCallback, this, _1));
-  
+  joint_sub_ = this->create_subscription<custom_msgs::msg::JointMsg>("/joint", 1, std::bind(&CtrlNode::jointCallback, this, _1));
   control_pub_ = this->create_publisher<custom_msgs::msg::ControlMsg>("/control", 1);
 
   // Timer
@@ -24,27 +24,32 @@ CtrlNode::CtrlNode() : Node("control_node") {
   timer_ = this->create_wall_timer(std::chrono::milliseconds(period), std::bind(&CtrlNode::timerCallback, this));
 }
 
-void CtrlNode::imuCallback(const sensor_msgs::msg::Imu::SharedPtr msg) {
-  // Store and process imu data
-  if (first_imu_) {
-    last_imu_time_ = this->now();
-    first_imu_ = false;
+void CtrlNode::jointCallback(const custom_msgs::msg::JointMsg::SharedPtr msg) {
+  // Cache joint data
+  auto now = this->now();
+  if (first_joint_) {
+    last_joint_time_ = now;
+    first_joint_ = false;
   }
-  const double dt = (this->now() - last_imu_time_).seconds();
+  const double dt = (now - last_joint_time_).seconds();
 
-  Eigen::Vector2d omega = toEigen(msg->angular_velocity).tail<2>();
-  estimator_.update(omega, dt);
+  joint_ = toEigen(msg->joint);
+  joint_vel_ = toEigen(msg->joint_vel);
+  if (estimator_.isInitialized()) {
+    estimator_.update(joint_, joint_vel_, dt); 
+  }
 }
 
 void CtrlNode::visionCallback(const custom_msgs::msg::VisionMsg::SharedPtr msg) {
   const bool has_meas = msg->detected || msg->tracked;
-  if (!has_meas) return;
+  if (!has_meas || first_joint_) return;
 
   // Vision State
   auto vision_state = RobotState(msg);
 
   // Update Estimator state
   if (!estimator_.isInitialized()) {
+    vision_state.setJoint(joint_, joint_vel_);
     estimator_.init(vision_state);
   } else {
     estimator_.update(vision_state);

@@ -5,14 +5,20 @@ BridgeNode::BridgeNode() : Node("bridge_node") {
   std::string config_path;
   this->declare_parameter<std::string>("config_path", "");
   this->get_parameter("config_path", config_path);
-  PortConfig port_config = PortConfig::load(config_path);
-
-  // Initilaize
-  // serial_ = Serial(port_config);
+  PortConfigList port_config = PortConfigList::load(config_path);
+  
+  // Input port
+  for (auto iconfig : port_config.input) {
+    input_.push_back(Serial(iconfig));
+  }
+  // Output port
+  for (auto oconfig : port_config.output) {
+    output_.push_back(Serial(oconfig));
+  }
   
   // ROS subscriber and publisher
   control_sub_ = this->create_subscription<custom_msgs::msg::ControlMsg>("/control", 1, std::bind(&BridgeNodwe::controlCallback, this, _1));
-  imu_pub_ = this->create_publisher<sensor_msgs::msg::Imu>("/imu", 1);
+  joint_pub_ = this->create_publisher<custom_msgs::msg::JointMsg>("/joint", 1);
 
   // Timer
   const int period = static_cast<int>(1000.0 / port_config.watchdog_frequency);
@@ -29,19 +35,22 @@ void BridgeNode::controlCallback(const custom_msgs::msg::ControlMsg::SharedPtr m
 
 void BridgeNode::timerCallback() {
   // Read IMU Port
-  if (!readImuframe()) return;
-  imu_pub_->publish(imu_);
+  if (!readSerialFrame()) return;
+
+
+  // Publish Joint data
+  custom_msgs::msg::JointMsg msg;
+  msg.header.stamp = this->now();
+  msg.yaw = ..
+  msg.pitch = ..
+  joint_pub_->publish(msg);
 }
 
-bool BridgeNode::readImuFrame() {
-  // Read IMU frame on serial port
-  // Fix imu_ 
-
-  // Check if whole IMU frame has read
-  imu_.header = this->now();
-  imu_.orientation = ...
-  imu_.angular_velocity = ...
-  imu_.linear_acceleration = ...
+bool BridgeNode::readSerial() {
+  // Read data
+  for (auto iport : input_) {
+    iport.readSerial(buffer.data(), size);
+  }
 
   return true;
 }

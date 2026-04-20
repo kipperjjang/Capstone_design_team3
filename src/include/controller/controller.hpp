@@ -14,10 +14,13 @@ public:
     fsm_ = FSM(config_);
   }
 
-  void run(const RobotState &state);
+  void run(const RobotState &state, Eigen::Vector4d &joint);
   const ControlState& getControl() { return u_; }
 
 private:
+  // Modeling utils
+  Eigen::Vector2d computeIK(const RobotState &state);
+
   // FSM model
   FSM fsm_;
 
