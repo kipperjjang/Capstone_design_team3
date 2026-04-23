@@ -4,7 +4,7 @@
 
 PortConfigList PortConfigList::load(const std::string &path) {
   PortConfigList config;
-  
+
   const YAML::Node file = YAML::LoadFile(path);
 
   const YAML::Node i = file["bridge"]["serial"]["input"];

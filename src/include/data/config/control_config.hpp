@@ -1,10 +1,11 @@
 #pragma once
-#include <string>
+
 #include <Eigen/Dense>
 
+#include <string>
+
 struct ControlConfig {
-  Eigen::Vector2d img_center; // Pixel of the center of the image
-  Eigen::Matrix2d K, D;       // PD coefficient  
+  Eigen::Matrix2d Kp, Kd;     // PD coefficient
 
   double hz;                  // Node frequency
   double time_delay;          // Expected time delay during fire
@@ -16,4 +17,3 @@ struct ControlConfig {
 
   static ControlConfig load(const std::string &path);
 };
- 

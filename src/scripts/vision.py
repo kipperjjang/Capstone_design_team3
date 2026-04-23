@@ -1,168 +1,129 @@
 #!/usr/bin/env python3
 from cv_bridge import CvBridge
 import cv2
-from ultralytics import YOLO
-
 import numpy as np
-import yaml
 import rclpy
-from rclpy.node import Node
 from rclpy.executors import SingleThreadedExecutor
+from rclpy.node import Node
+from ultralytics import YOLO
 
 from custom_msgs.msg import VisionMsg
 from sensor_msgs.msg import Image
 
+from trajectory_utils import load_runtime_config
+
+
 class VisionNode(Node):
   def __init__(self):
-    super().__init__('vision_node')
-    self.declare_parameter('publish_image', True)
-    self.declare_parameter('image_topic', '/vision/image')
-    self.declare_parameter('config_path', '')
-    self.declare_parameter('yolo_model_path', 'yolo_models/robot_yolo_p4_416_combine/weights/best.pt')
-  
-    # Load configuration
-    self.yolo_model_path = self.get_parameter('yolo_model_path').get_parameter_value().string_value
-    self.loadYAML(self.get_parameter('config_path').get_parameter_value().string_value)
-    self.publish_image = self.get_parameter('publish_image').value
-    self.image_topic = self.get_parameter('image_topic').value
+    super().__init__("vision_node")
 
-    # OpenCV
+    self.declare_parameter("config_path", "")
+    self.declare_parameter("yolo_model_path", "yolo_models/robot_yolo_p4_416_combine/weights/best.pt")
+
+    self.config_path = self.get_parameter("config_path").value
+    self.config = load_runtime_config(self.config_path)
+    vision_config = self.config.get("vision", {})
+
+    self.declare_parameter("vision_topic", vision_config.get("topic_live", "/vision"))
+    self.declare_parameter("image_topic", vision_config.get("image_topic", "/vision/image"))
+    self.declare_parameter("publish_state", vision_config.get("publish_state", True))
+    self.declare_parameter("publish_image", vision_config.get("publish_image", True))
+
+    self.vision_topic = self.get_parameter("vision_topic").value
+    self.image_topic = self.get_parameter("image_topic").value
+    self.publish_state = self.get_parameter("publish_state").value
+    self.publish_image = self.get_parameter("publish_image").value
+    self.yolo_model_path = self.get_parameter("yolo_model_path").value
+
+    self.target_class = int(vision_config.get("target_class", 1))
+    self.confidence = float(vision_config.get("confidence", 0.2))
+
     self.bridge = CvBridge()
-    self.capture = cv2.VideoCapture(0) # /dev/video0
-    self.isDetected = False
+    self.capture = cv2.VideoCapture(0)
+    self.model = YOLO(self.yolo_model_path)
+    self.position = np.zeros(2, dtype=np.float32)
+    self.is_detected = False
     self.img = None
 
-    # YOLO
-    self.model = YOLO(self.yolo_model_path)
-    # np.array for relative positions of detected object with respect to the center of image
-    self.rel_pos = np.empty((2,2))
-    self.bbox = np.zeros(2)
+    self.state_pub = self.create_publisher(VisionMsg, self.vision_topic, 10) if self.publish_state else None
+    self.image_pub = self.create_publisher(Image, self.image_topic, 10) if self.publish_image else None
 
-    # ROS Publisher
-    self.state_pub = self.create_publisher(VisionMsg, '/vision', 10)
-    self.image_pub = None
-    if self.publish_image:
-      self.image_pub = self.create_publisher(Image, self.image_topic, 10)
-
-  def loadYAML(self, path):
-    with open(path, 'r') as f:
-      config = yaml.safe_load(f)
-    self.target_class = config['vision']['target_class']
-    self.confidence = config['vision']['confidence']
-
-  def readImg(self):
+  def read_img(self):
     ret, frame = self.capture.read()
     if not ret:
       return False
 
-    height, width = frame.shape[:2]
-    self.frame_center = np.array([width // 2, height // 2])
-
     self.img = frame
     return True
 
-  def detectBell(self):
-    # Classes : pillar [0] / bell [1]
-    TARGET_CLASSES = (1)
+  def detect_bell(self):
+    self.is_detected = False
+    self.position = np.zeros(2, dtype=np.float32)
+    if self.img is None:
+      return
 
-    # Inference only for the classes in TARGET_CLASSES
-    results = self.model(self.img, conf=self.confidence, classes=list(TARGET_CLASSES), verbose=False)
-    r = results[0]
-    boxes = r.boxes
+    results = self.model(self.img, conf=self.confidence, classes=[self.target_class], verbose=False)
+    if not results:
+      return
 
-    # Early exit if no detections
+    boxes = results[0].boxes
     if boxes is None or len(boxes) == 0:
       return
 
-    # N : number of boxes
-    xyxy = boxes.xyxy.cpu().numpy()  # shape: (N, 4)
-    cls = boxes.cls.cpu().numpy().astype(np.int16)  # shape: (N,)
-    conf = boxes.conf.cpu().numpy()  # shape: (N,)
-
-    best_idx = {}  # {class_id: box_index}
-
-    for i in range(len(cls)):
-      cls_id = cls[i]
-
-      prev_i = best_idx.get(cls_id)
-
-      # Update if first occurrence or higher confidence found
-      if prev_i is None or conf[i] > conf[prev_i]:
-        best_idx[cls_id] = i
-
-    # Store relative positions (one per class)
-    for cls_id, i in best_idx.items():
-      x1, y1, x2, y2 = xyxy[i].astype(np.int32)
-
-      # Compute object center
-      obj_center_x = (x1 + x2) / 2
-      obj_center_y = (y1 + y2) / 2
-
-      # Normalize horizontal offset to [-1, 1]
-      relative_x = (obj_center_x - self.frame_center[0]) # / self.frame_center[0]
-      relative_y = (obj_center_y - self.frame_center[1]) # / self.frame_center[1]
-
-      cls_name = self.model.names[cls_id]
-      score = conf[i]
-
-      self.rel_pos[cls_id, 0] = relative_x
-      self.rel_pos[cls_id, 1] = relative_y
-
-    # if Success to detect
-    self.isDetected = True
-    return
-
-  def trackBell(self):
-    # Run Tracker ...
-    
-    # if Fail to track
-    self.isDetected = False
-    return
+    confidences = boxes.conf.cpu().numpy()
+    best_index = int(np.argmax(confidences))
+    x1, y1, x2, y2 = boxes.xyxy.cpu().numpy()[best_index]
+    self.position = np.array([(x1 + x2) / 2.0, (y1 + y2) / 2.0], dtype=np.float32)
+    self.is_detected = True
 
   def publish(self):
-    # Publish pose
     stamp = self.get_clock().now().to_msg()
 
-    msg = VisionMsg()
-    msg.header.stamp = stamp
-    msg.detected = self.isDetected
-    msg.p = self.rel_pos[0]
-    msg.confidence = self.confidence
+    if self.state_pub is not None:
+      msg = VisionMsg()
+      msg.header.stamp = stamp
+      msg.detected = self.is_detected
+      msg.tracked = False
+      msg.p = self.position.tolist()
+      msg.v = []
+      msg.a = []
+      msg.bbox = [0.0, 0.0]
+      msg.confidence = float(self.confidence)
+      msg.covariance = []
+      msg.source_mode = "live"
+      self.state_pub.publish(msg)
 
-    # data ...
-    self.state_pub.publish(msg)
-
-    if self.publish_image and self.img is not None:
-      image_msg = self.bridge.cv2_to_imgmsg(self.img, encoding='bgr8')
+    if self.image_pub is not None and self.img is not None:
+      image_msg = self.bridge.cv2_to_imgmsg(self.img, encoding="bgr8")
       image_msg.header.stamp = stamp
       self.image_pub.publish(image_msg)
 
   def run(self):
-    exec = SingleThreadedExecutor()
-    exec.add_node(self)
+    executor = SingleThreadedExecutor()
+    executor.add_node(self)
 
-    while (rclpy.ok()):
-      # Read Image
-      if not self.readImg():
-        continue
+    try:
+      while rclpy.ok():
+        if not self.read_img():
+          executor.spin_once(timeout_sec=0.01)
+          continue
 
-      # Run Detection or Tracking
-      if self.isDetected:
-        self.trackBell()
-      else:
-        self.detectBell()
-
-      # Publish msg
-      self.publish()
-        
-    exec.shutdown()
-    self.capture.release()
-    self.destroy_node()
-    rclpy.shutdown()
+        self.detect_bell()
+        self.publish()
+        executor.spin_once(timeout_sec=0.0)
+    finally:
+      executor.shutdown()
+      self.capture.release()
+      self.destroy_node()
+      if rclpy.ok():
+        rclpy.shutdown()
 
 
-# Run simulation node
-if __name__ == "__main__":
+def main():
   rclpy.init()
-  sim = VisionNode()
-  sim.run()
+  node = VisionNode()
+  node.run()
+
+
+if __name__ == "__main__":
+  main()

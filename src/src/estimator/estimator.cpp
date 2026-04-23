@@ -1,11 +1,11 @@
 #include "estimator/estimator.hpp"
 
-const RobotState& Estimator::getState(bool isProcess) {
+const RobotState &Estimator::getState(bool isProcess) {
   if (kf_.isInitialized()) {
-    const double f = config_.focal_length;
     const Eigen::VectorXd &x = isProcess ? kf_.x_pred() : kf_.x();
-    state_.angle = x.segment<2>(0);
-    state_.omega = x.segment<2>(2);
+    state_.p = x.segment<2>(0);
+    state_.v = x.segment<2>(2);
+    state_.has_velocity = true;
   }
   return state_;
 }
@@ -14,7 +14,7 @@ void Estimator::init(const RobotState &state) {
   // Initialize estimator
   if (!state.detected && !state.tracked) return;
 
-  kf_.init(state);
+  kf_.init(state.p, state.has_velocity ? state.v : Eigen::Vector2d::Zero());
 
   state_ = state;
   state_.process = false;
@@ -30,10 +30,7 @@ void Estimator::update(const RobotState &state) {
   const double dt = t - last_measurement_time_;
   const bool has_measurement = state.detected || state.tracked;
 
-  const Eigen::Vector4d x_obs = computeBellAngle(state);
-  const Eigen::Matrix2d A = state.Jp;
-  const Eigen::Matrix2d B = state.Jj;
-
+  state_ = state;
   state_.process = false;
   state_.dt = dt;
 
@@ -47,37 +44,33 @@ void Estimator::update(const RobotState &state) {
     if (!has_measurement) return;
 
     // Re-initialize with the new vision input
-    kf_.init(state);
+    kf_.init(state.p, state.has_velocity ? state.v : Eigen::Vector2d::Zero());
     initialized_ = true;
   } else {
     if (!has_measurement) return;
 
-    // Compute Measurement noise
-    const auto r_pixel = (2 * config_.r_detected / (dt*dt)) * Eigen::Matrix2d::Identity();
-    const auto r_omega = config_.r_omega * Eigen::Matrix2d::Identity();
-    const Eigen::Matrix2d R_pos = Eigen::Matrix2d::Identity() * config_.r_detected / config_.focal_length;
-    const Eigen::Matrix2d R_vel = A * r_pixel * A.transpose() + B * r_omega * B.transpose();
-    
-    // Filter
     kf_.predict(dt, false);
-    kf_.updatePosition(x_obs.segment<2>(0), R_pos);
+    const double r_position = state.detected ? config_.r_detected : config_.r_tracked;
+    kf_.updatePosition(state.p, Eigen::Matrix2d::Identity() * r_position);
     if (state.has_velocity) {
-      kf_.updateVelocity(x_obs.segment<2>(2), R_vel);
+      kf_.updateVelocity(state.v, Eigen::Matrix2d::Identity() * config_.r_temp_vel);
+    }
+    if (state.has_acceleration) {
+      kf_.updateAcceleration(state.a, Eigen::Matrix2d::Identity() * config_.r_temp_acc);
     }
   }
-  
-  // Store data
+
   last_measurement_time_ = t;
 }
 
 void Estimator::update(const double t) {
   const double dt = t - last_measurement_time_;
   if (dt < 0.0) return;
-  
+
   state_.process = true;
   state_.dt = dt;
   state_.t = t;
-  
+
   // Predict state via process
   if (dt > config_.max_time_gap) {
     kf_.reset();
@@ -91,7 +84,7 @@ void Estimator::update(const double t) {
 void Estimator::update(const Eigen::Vector2d &joint, const Eigen::Vector2d &joint_vel, const double dt) {
   if (dt <= 0.0) return;
 
-  const double sample_hz = 1/dt;
-  state_.joint = lpf(joint, state_.joint, sample_hz/10, dt);
-  state_.joint_vel = lpf(joint_vel, state_.joint_vel, sample_hz/10, dt);
+  const double sample_hz = 1.0 / dt;
+  state_.joint = lpf(joint, state_.joint, sample_hz / 10.0, dt);
+  state_.joint_vel = lpf(joint_vel, state_.joint_vel, sample_hz / 10.0, dt);
 }

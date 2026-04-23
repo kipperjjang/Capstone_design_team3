@@ -1,15 +1,14 @@
 #pragma once
 
 #include <string>
-#include <Eigen/Dense>
-#include "data/state/control_state.hpp"
+
+#include "data/config/control_config.hpp"
 #include "data/state/fsm_state.hpp"
+#include "data/state/robot_state.hpp"
 
 class FSM {
 public:
-  FSM(const ControlConfig &config) : config_(config) {
-    fsm_state_ = FSMState::SEARCH;
-  }
+  FSM(const ControlConfig &config) : config_(config) {}
 
   void update(const RobotState &state);
 
@@ -19,5 +18,5 @@ public:
 
 private:
   ControlConfig config_;
-  FSMState fsm_state_;
-}
+  FSMState fsm_state_{FSMState::SEARCH};
+};

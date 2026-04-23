@@ -4,20 +4,46 @@ KalmanFilter::KalmanFilter(const EstimatorConfig &config) : config_(config) {
   x_pred_ = Eigen::VectorXd::Zero(6);
   x_ = Eigen::VectorXd::Zero(6);
   P_ = Eigen::MatrixXd::Identity(6, 6);
-  H_ = Eigen::MatrixXd::Identity(6, 6);
+  H_ = Eigen::MatrixXd::Identity(4, 6);
 }
 
-void KalmanFilter::init(const Eigen::Vector2d &p, const Eigen::Vector2d &v) {
+Eigen::Vector4d KalmanFilter::computeBellAngle(const RobotState &state) {
+  const double p = state.p(0);
+  const double q = state.p(1);
+  const double c1 = std::cos(state.joint(0));
+  const double s1 = std::sin(state.joint(0));
+  const double c2 = std::cos(state.joint(1));
+  const double s2 = std::sin(state.joint(1));
+  const double f = config_.focal_length;
+  
+  // Compute yaw and pitch angle of the bell with respect to the base frame
+  const double alpha = std::atan2(-p*c1 + q*s1*s2 + f*s1*c2, p*s1+q*c1*s2+f*c1*c2);
+  const double beta = std::atan2(-q*c2 + f*c2, std::sqrt(p*p + std::pow(q*s2 + f*c2, 2)))
+
+  // Compute angular velocity of the bell
+  const double R = std::sqrt(p*p + std::pow(q*s2+f*c2, 2));
+  const double L = std::sqrt(p*p + q*q + f*f);
+  state.Jp <<     -(q*s2 + f*c2)/(R*R),             p*s2/(R*R),
+              -p*(f*s2 - q*c2)/(L*L*R), -(q*s2 + f*c2)/(L*L*R);
+  state.Jj << 1, p*(q*c2 - f*s2),
+              0, (q*s2 + f*c2)/R;
+  Eigen::Vector2d omega = state.Jp * state.v + state.Jj * state.joint_vel;
+
+  Eigen::Vector4d out;
+  out << alpha, beta, omega;
+  return out;
+}
+
+void KalmanFilter::init(const RobotState &state) {
+  // Initialize
   x_.setZero();
-  x_.segment<2>(0) = p;
-  x_.segment<2>(2) = v;
+  x_ = computeBellAngle(state);
   x_pred_ = x_;
 
   P_.setZero();
   P_.block<2, 2>(0, 0) = Eigen::Matrix2d::Identity() * config_.p0_pos;
   P_.block<2, 2>(2, 2) = Eigen::Matrix2d::Identity() * config_.p0_vel;
   P_.block<2, 2>(4, 4) = Eigen::Matrix2d::Identity() * config_.p0_acc;
-
   initialized_ = true;
 }
 
@@ -120,10 +146,10 @@ void KalmanFilter::updatePosition(const Eigen::Vector2d &p, const Eigen::Matrix2
 
 void KalmanFilter::updateVelocity(const Eigen::Vector2d &v, const Eigen::Matrix2d &R) {
   if (!initialized_) return;
-  update(v, H_.block(2, 0, 2, 6), R, x_);
+  update(v, H_.block(2, 0, 2, 6), R, x_pred_);
 }
 
-void KalmanFilter::updateAcceleration(const Eigen::Vector2d &a, const Eigen::Matrix2d &R) {
-  if (!initialized_) return;
-  update(a, H_.block(4, 0, 2, 6), R, x_);
-}
+// void KalmanFilter::updateAcceleration(const Eigen::Vector2d &a, const Eigen::Matrix2d &R) {
+//   if (!initialized_) return;
+//   update(a, H_.block(4, 0, 2, 6), R, x_);
+// }

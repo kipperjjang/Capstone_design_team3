@@ -1,27 +1,18 @@
 #pragma once
 
-#include "data/config/controller_config.hpp"
-#include "data/state/robot_state.hpp"
-#include "data/state/control_state.hpp"
-#include "data/state/fsm_state.hpp"
 #include "controller/fsm.hpp"
-
-#include "utils/lpf.hpp"
+#include "data/config/control_config.hpp"
+#include "data/state/control_state.hpp"
+#include "data/state/robot_state.hpp"
 
 class Controller {
 public:
-  Controller(const ControlConfig &config) : config_(config) {
-    fsm_ = FSM(config_);
-  }
+  Controller(const ControlConfig &config) : fsm_(config), config_(config) {}
 
-  void run(const RobotState &state, Eigen::Vector4d &joint);
-  const ControlState& getControl() { return u_; }
+  void run(const RobotState &state);
+  const ControlState& getControl() const { return u_; }
 
 private:
-  // Modeling utils
-  Eigen::Vector2d computeIK(const RobotState &state);
-
-  // FSM model
   FSM fsm_;
 
   // Controller configuration
@@ -29,8 +20,8 @@ private:
 
   // State
   RobotState state_;
-  RobotState error_, error_aim_;
+  RobotState aim_state_;
   
   // Control state
   ControlState u_;
-}
+};

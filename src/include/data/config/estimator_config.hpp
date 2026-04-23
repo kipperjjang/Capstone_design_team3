@@ -10,7 +10,7 @@ struct EstimatorConfig {
   double r_detected;        // Measurement covariance for detected input
   double r_tracked;         // Measurement covariance for tracked input
   double r_temp_vel;        // Measurement covariance for external velocity hint
-  // double r_temp_acc;        // Measurement covariance for external acceleration hint
+  double r_temp_acc;        // Measurement covariance for external acceleration hint
 
   double r_angle;           // Measurement covarinace for encoder angle
   double r_omega;           // Measurement covarinace for encoder velocity

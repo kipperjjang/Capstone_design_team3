@@ -4,6 +4,13 @@ from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from ament_index_python.packages import get_package_share_directory
 import os
+import yaml
+
+
+def _load_config(path):
+  with open(path, "r", encoding="utf-8") as stream:
+    return yaml.safe_load(stream) or {}
+
 
 def generate_launch_description():
   # Directory for the package
@@ -15,6 +22,8 @@ def generate_launch_description():
   # xml_path          = os.path.join(pkg_dir, 'models', 'xml', 'uam_3dof.xml')
 
   # LaunchConfiguration
+  config = _load_config(config_path)
+  vision_config = config.get("vision", {})
   
   # HW-ROS bridge node
   bridge_node = Node(

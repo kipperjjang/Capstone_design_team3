@@ -6,8 +6,6 @@ set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Not using pinocchio for python
-set(BUILD_WITH_PYTHON_INTERFACE OFF)
-set(PINOCCHIO_WITH_PYTHON_INTERFACE OFF)
 option(BUILD_FULL_CAPSTONE "Build controller and bridge executables" OFF)
 
 # Compile with Release
@@ -37,12 +35,26 @@ find_package(yaml-cpp REQUIRED)
 
 # ------------------------------------------------------------------------------ #
 # Estimator test library
-add_library(capstone_library
+set(CAPSTONE_LIBRARY_SOURCES
   src/data/config/estimator_config.cpp
   src/estimator/estimator.cpp
   src/estimator/kalman_filter.cpp
+  src/ros/test_node.cpp
 )
 
+if(BUILD_FULL_CAPSTONE)
+  list(APPEND CAPSTONE_LIBRARY_SOURCES
+    src/bridge/serial.cpp
+    src/data/config/port_config.cpp
+    src/data/config/control_config.cpp
+    src/controller/controller.cpp
+    src/controller/fsm.cpp
+    src/ros/bridge_node.cpp
+    src/ros/ctrl_node.cpp
+  )
+endif()
+
+add_library(capstone_library ${CAPSTONE_LIBRARY_SOURCES})
 target_include_directories(capstone_library PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
@@ -56,15 +68,14 @@ target_link_libraries(capstone_library
 ament_target_dependencies(capstone_library
   rclcpp
   std_msgs
+  geometry_msgs
+  sensor_msgs
   custom_msgs
 )
 
 # ------------------------------------------------------------------------------ #
 # Test executable
-add_executable(test_node
-  src/test.cpp
-  src/ros/test_node.cpp
-)
+add_executable(test_node src/test.cpp)
 target_link_libraries(test_node capstone_library)
 ament_target_dependencies(test_node
   rclcpp
@@ -73,54 +84,18 @@ ament_target_dependencies(test_node
 )
 
 if(BUILD_FULL_CAPSTONE)
-  # Library;  compile library into .a or .so
-  add_library(capstone_library
-    src/bridge/serial.cpp
-    src/data/config/port_config.cpp
-    src/data/config/estimator_config.cpp
-    src/data/config/control_config.cpp
-    src/estimator/estimator.cpp
-    src/estimator/kalman_filter.cpp
-    src/controller/controller.cpp
-    src/controller/fsm.cpp
-    src/ros/bridge_node.cpp
-    src/ros/ctrl_node.cpp
-  )
-
-  target_include_directories(capstone_library PUBLIC
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-    $<INSTALL_INTERFACE:include>
-  )
-
-  target_link_libraries(capstone_library
-    Eigen3::Eigen
-    yaml-cpp
-  )
-
-  ament_target_dependencies(capstone_library
+  add_executable(ctrl_node src/ctrl.cpp)
+  target_link_libraries(ctrl_node capstone_library)
+  ament_target_dependencies(ctrl_node
     rclcpp
     std_msgs
     sensor_msgs
     custom_msgs
   )
 
-  # Executable; compile into object file and tell linker to include library
-  add_executable(ctrl
-    src/ctrl.cpp
-  )
-  target_link_libraries(ctrl capstone_library)
-  ament_target_dependencies(ctrl
-    rclcpp
-    std_msgs
-    sensor_msgs
-    custom_msgs
-  )
-
-  add_executable(bridge
-    src/bridge.cpp
-  )
-  target_link_libraries(bridge capstone_library)
-  ament_target_dependencies(bridge
+  add_executable(bridge_node src/bridge.cpp)
+  target_link_libraries(bridge_node capstone_library)
+  ament_target_dependencies(bridge_node
     rclcpp
     std_msgs
     sensor_msgs
@@ -138,9 +113,8 @@ install(TARGETS
 
 if(BUILD_FULL_CAPSTONE)
   install(TARGETS
-    capstone_library
-    ctrl
-    bridge
+    ctrl_node
+    bridge_node
     DESTINATION lib/${PROJECT_NAME}
   )
 endif()
@@ -153,6 +127,7 @@ install(DIRECTORY include/
 install(PROGRAMS
   scripts/vision.py
   scripts/test_visualizer.py
+  scripts/test_kalman_evo.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

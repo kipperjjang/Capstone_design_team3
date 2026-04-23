@@ -1,15 +1,20 @@
-# vision YOLO parameters
+# vision parameters
 vision:
+  source:                 live
+  topic_live:             /vision
+  topic_test:             /vision/test
+  image_topic:            /vision/image
+  publish_state:          true
+  publish_image:          true
   target_class:           1
   confidence:             0.2
 
 # Controller parameters 
 controller:
-  image_center:           [0.0, 0.0]
   Kp:                     [200.0,200.0]
   Kd:                     [5.0,5.0]
   
-  frequency:              2000
+  frequency:              1000        # Frequency of the control node
   time_delay:             0.1         # Expected time delay during fire (s)
 
   err_p_track:            1e-3        # Error threshold for tracking, position  (pixel)
@@ -20,23 +25,17 @@ controller:
 # Estimator parameters 
 estimator:
   camera:
-    focal_length:           0.01
+    focal_length:         0.01
   kalman:
-    q_acc:                  10000.0
-    r_detected:             900.0
-    r_tracked:              900.0
-    r_temp_vel:             100.0
-    # r_temp_acc:             1000.0
-
-    r_angle:                0.0025
-    r_omega:                0.01
-
-    p0_pos:                 900.0
-    p0_vel:                 900.0
-    p0_acc:                 4000.0
-    max_time_gap:           0.5
-    late_tolerance:         0.002
-
+    q_acc:                10000.0
+    r_detected:           900.0
+    r_tracked:            900.0
+    r_temp_vel:           100.0
+    r_temp_acc:           1000.0
+    p0_pos:               900.0
+    p0_vel:               900.0
+    p0_acc:               4000.0
+    max_time_gap:         0.5
 
 bridge:
   serial:
@@ -47,7 +46,7 @@ bridge:
       data_bits:          [8, 8]
       stop_bits:          [1, 1]
       parity:             [0, 0]
-      
+
     output:
       name:               ["yaw", "pitch"]
       port:               ["/dev/ttyUSB3", "/dev/ttyUSB4"]  # Write joint data to motor
@@ -55,5 +54,5 @@ bridge:
       data_bits:          [8, 8]
       stop_bits:          [1, 1]
       parity:             [0, 0]
-    
+
     watchdog_frequency:   1000

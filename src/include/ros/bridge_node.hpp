@@ -1,9 +1,11 @@
 #pragma once
 
-#include <rclcpp/rclcpp.hpp>
-#include "estimator/estimator.hpp"
-#include "controller/controller.hpp"
+#include <memory>
+#include <vector>
 
+#include <rclcpp/rclcpp.hpp>
+
+#include "bridge/serial.hpp"
 #include "custom_msgs/msg/control_msg.hpp"
 #include "custom_msgs/msg/joint_msg.hpp"
 
@@ -14,17 +16,19 @@ public:
 private:
   // Callback function
   void controlCallback(const custom_msgs::msg::ControlMsg::SharedPtr msg);
+  void timerCallback();
   
   // Utils
   bool readSerialFrame();
-  
+
   // ROS
   rclcpp::Subscription<custom_msgs::msg::ControlMsg>::SharedPtr control_sub_;
   rclcpp::Publisher<custom_msgs::msg::JointMsg>::SharedPtr joint_pub_;
-  
-  // Serial
-  std::vector<Serial> input_;     // Input port for reading
-  std::vector<Serial> output_;    // Output port for writing
+  rclcpp::TimerBase::SharedPtr watchdog_timer_;
 
+  // Serial
+  std::vector<std::unique_ptr<Serial>> input_;
+  std::vector<std::unique_ptr<Serial>> output_;
   std::vector<uint8_t> buffer_;
+  bool warned_about_protocol_{false};
 };
