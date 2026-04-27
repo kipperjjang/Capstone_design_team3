@@ -5,7 +5,9 @@ const RobotState &Estimator::getState(bool isProcess) {
     const Eigen::VectorXd &x = isProcess ? kf_.x_pred() : kf_.x();
     state_.p = x.segment<2>(0);
     state_.v = x.segment<2>(2);
+    state_.a = x.segment<2>(4);
     state_.has_velocity = true;
+    state_.has_acceleration = true;
   }
   return state_;
 }

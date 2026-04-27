@@ -3,8 +3,10 @@ float64 sample_time
 
 float64[2] raw_p
 float64[2] raw_v
+float64[2] raw_a
 float64[2] estimated_p
 float64[2] estimated_v
+float64[2] estimated_a
 float64 dt
 
 bool has_raw

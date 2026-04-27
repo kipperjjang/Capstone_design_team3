@@ -126,9 +126,19 @@ install(DIRECTORY include/
 # Python simulator; PROGRAMS stands for executable scripts such as Python
 install(PROGRAMS
   scripts/vision.py
+  scripts/vision_test.py
   scripts/test_visualizer.py
   scripts/test_kalman_evo.py
+  scripts/prediction/sample_training_data.py
+  scripts/prediction/generate_synthetic_data.py
   DESTINATION lib/${PROJECT_NAME}
+)
+
+install(DIRECTORY scripts/prediction/
+  DESTINATION lib/${PROJECT_NAME}/prediction
+  FILES_MATCHING
+    PATTERN "*.py"
+    PATTERN "*.md"
 )
 
 # Launch files

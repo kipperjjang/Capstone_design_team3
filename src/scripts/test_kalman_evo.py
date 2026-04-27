@@ -36,7 +36,7 @@ class KalmanEvoVisualizer(Node):
     self.declare_parameter('view_min_y', 0.0)
     self.declare_parameter('view_max_y', 480.0)
     self.declare_parameter('debug_collection_grace_sec', 0.2)
-    self.declare_parameter('evo_rpe_delta_frames', 10)
+    self.declare_parameter('evo_rpe_delta_frames', 1)
     self.declare_parameter('draw_prediction_included', True)
 
     self.debug_topic = self.get_parameter('debug_topic').value
@@ -90,6 +90,7 @@ class KalmanEvoVisualizer(Node):
       'ape_values': [],
       'rpe_times': [],
       'rpe_values': [],
+      'rpe_delta_time_sec': None,
       'error': None,
     }
 
@@ -263,11 +264,6 @@ class KalmanEvoVisualizer(Node):
       return 'prediction included estimation'
     return 'filtered estimation'
 
-  def estimationColor(self):
-    if self.draw_prediction_included:
-      return 'tab:red'
-    return 'tab:blue'
-
   def splitKalmanSamples(self, kf_samples):
     if self.draw_prediction_included:
       return list(kf_samples), []
@@ -296,6 +292,7 @@ class KalmanEvoVisualizer(Node):
       'ape_values': [],
       'rpe_times': [],
       'rpe_values': [],
+      'rpe_delta_time_sec': None,
       'error': None,
     }
 
@@ -324,6 +321,9 @@ class KalmanEvoVisualizer(Node):
 
     if len(metric_samples) > self.evo_rpe_delta_frames:
       delta = self.evo_rpe_delta_frames
+      delta_times = times_arr[delta:] - times_arr[:-delta]
+      if len(delta_times) > 0:
+        self.metric_report['rpe_delta_time_sec'] = float(np.median(delta_times))
       rpe_times = []
       rpe_values = []
       for i in range(delta, len(metric_samples)):
@@ -375,36 +375,136 @@ class KalmanEvoVisualizer(Node):
       return float(np.sqrt(np.mean(arr * arr)))
     return None
 
+  def periodColor(self, period_idx):
+    colors = plt.rcParams['axes.prop_cycle'].by_key().get('color', [])
+    if not colors:
+      colors = ['tab:blue', 'tab:orange', 'tab:green', 'tab:red', 'tab:purple']
+    return colors[period_idx % len(colors)]
+
+  def splitArraysByPeriod(self, times, values):
+    if len(times) == 0:
+      return []
+
+    segments = []
+    for period_idx in range(self.sample_period_count):
+      start = period_idx * self.period_sec
+      end = (period_idx + 1) * self.period_sec
+      if period_idx == self.sample_period_count - 1:
+        mask = (times >= start) & (times <= end + 1e-9)
+      else:
+        mask = (times >= start) & (times < end)
+      if np.any(mask):
+        segments.append((period_idx, times[mask], values[mask]))
+    return segments
+
+  def plotPeriodLine(self, ax, times, values, axis_idx=None, linestyle='-', linewidth=2,
+                     alpha=1.0, label_prefix=None):
+    for period_idx, period_times, period_values in self.splitArraysByPeriod(times, values):
+      y_values = period_values[:, axis_idx] if axis_idx is not None else period_values
+      label = None
+      if label_prefix is not None:
+        label = '%s period %d' % (label_prefix, period_idx + 1)
+      ax.plot(
+        period_times,
+        y_values,
+        linestyle=linestyle,
+        color=self.periodColor(period_idx),
+        linewidth=linewidth,
+        alpha=alpha,
+        label=label)
+
+  def plotPeriodScatter(self, ax, times, values, axis_idx=None, s=18, marker='o',
+                        alpha=1.0, label_prefix=None):
+    for period_idx, period_times, period_values in self.splitArraysByPeriod(times, values):
+      y_values = period_values[:, axis_idx] if axis_idx is not None else period_values
+      label = None
+      if label_prefix is not None:
+        label = '%s period %d' % (label_prefix, period_idx + 1)
+      ax.scatter(
+        period_times,
+        y_values,
+        s=s,
+        marker=marker,
+        color=self.periodColor(period_idx),
+        alpha=alpha,
+        label=label)
+
+  def plotPeriodTrajectory(self, ax, times, points, linestyle='-', linewidth=2,
+                           alpha=1.0, marker=None, s=18, label_prefix=None):
+    for period_idx, _, period_points in self.splitArraysByPeriod(times, points):
+      label = None
+      if label_prefix is not None:
+        label = '%s period %d' % (label_prefix, period_idx + 1)
+      if marker is None:
+        ax.plot(
+          period_points[:, 0],
+          period_points[:, 1],
+          linestyle=linestyle,
+          color=self.periodColor(period_idx),
+          linewidth=linewidth,
+          alpha=alpha,
+          label=label)
+      else:
+        ax.scatter(
+          period_points[:, 0],
+          period_points[:, 1],
+          s=s,
+          marker=marker,
+          color=self.periodColor(period_idx),
+          alpha=alpha,
+          label=label)
+
   def plotTrajectoryFigure(self, raw_samples, filtered_samples, prediction_samples, truth_samples):
     truth_t, truth_xy = self.toTimePointArrays(truth_samples)
     raw_t, raw_xy = self.toTimePointArrays(raw_samples)
     filt_t, filt_xy = self.toTimePointArrays(filtered_samples)
     pred_t, pred_xy = self.toTimePointArrays(prediction_samples)
 
-    fig, axes = plt.subplots(1, 3, figsize=(17, 5.5), constrained_layout=True)
+    fig, axes = plt.subplots(1, 3, figsize=(17, 5.5))
+    fig.subplots_adjust(top=0.72, wspace=0.28)
     ax_xy, ax_x, ax_y = axes
 
     if len(truth_xy) > 0:
-      ax_xy.plot(truth_xy[:, 0], truth_xy[:, 1], '--', color='0.45', linewidth=2, label='ground truth')
-      ax_xy.scatter(
-        [truth_xy[0, 0], truth_xy[-1, 0]],
-        [truth_xy[0, 1], truth_xy[-1, 1]],
-        marker='x',
-        s=90,
-        color='black',
-        linewidths=2,
-        label='start/end')
-    if len(raw_xy) > 0:
-      ax_xy.scatter(raw_xy[:, 0], raw_xy[:, 1], s=18, color='tab:green', label='noised samples')
-    if len(filt_xy) > 0:
-      ax_xy.plot(
-        filt_xy[:, 0],
-        filt_xy[:, 1],
-        color=self.estimationColor(),
+      self.plotPeriodTrajectory(
+        ax_xy,
+        truth_t,
+        truth_xy,
+        linestyle='--',
         linewidth=2,
-        label=self.estimationLabel())
+        alpha=0.8,
+        label_prefix='ground truth')
+    if len(raw_xy) > 0:
+      self.plotPeriodTrajectory(
+        ax_xy,
+        raw_t,
+        raw_xy,
+        marker='o',
+        s=18,
+        alpha=0.42,
+        label_prefix='noised samples')
+    if len(filt_xy) > 0:
+      self.plotPeriodTrajectory(
+        ax_xy,
+        filt_t,
+        filt_xy,
+        linewidth=2.4,
+        label_prefix=self.estimationLabel())
     if len(pred_xy) > 0:
-      ax_xy.plot(pred_xy[:, 0], pred_xy[:, 1], color='tab:red', linewidth=2, label='prediction')
+      self.plotPeriodTrajectory(
+        ax_xy,
+        pred_t,
+        pred_xy,
+        linewidth=2,
+        alpha=0.7,
+        label_prefix='prediction')
+    ax_xy.scatter(
+      [truth_xy[0, 0], truth_xy[-1, 0]],
+      [truth_xy[0, 1], truth_xy[-1, 1]],
+      marker='x',
+      s=90,
+      color='black',
+      linewidths=2,
+      label='start/end')
     if self.use_fixed_view:
       ax_xy.set_xlim(self.view_min_x, self.view_max_x)
       ax_xy.set_ylim(self.view_min_y, self.view_max_y)
@@ -414,39 +514,59 @@ class KalmanEvoVisualizer(Node):
     ax_xy.grid(True, alpha=0.3)
 
     if len(truth_xy) > 0:
-      ax_x.plot(truth_t, truth_xy[:, 0], '--', color='0.45', linewidth=2)
+      self.plotPeriodLine(
+        ax_x,
+        truth_t,
+        truth_xy,
+        axis_idx=0,
+        linestyle='--',
+        linewidth=2,
+        alpha=0.8)
       ax_x.scatter([truth_t[0], truth_t[-1]], [truth_xy[0, 0], truth_xy[-1, 0]],
                    marker='x', s=90, color='black', linewidths=2)
     if len(raw_xy) > 0:
-      ax_x.scatter(raw_t, raw_xy[:, 0], s=18, color='tab:green')
+      self.plotPeriodScatter(ax_x, raw_t, raw_xy, axis_idx=0, s=18, alpha=0.42)
     if len(filt_xy) > 0:
-      ax_x.plot(filt_t, filt_xy[:, 0], color=self.estimationColor(), linewidth=2)
+      self.plotPeriodLine(ax_x, filt_t, filt_xy, axis_idx=0, linewidth=2.4)
     if len(pred_xy) > 0:
-      ax_x.plot(pred_t, pred_xy[:, 0], color='tab:red', linewidth=2)
+      self.plotPeriodLine(ax_x, pred_t, pred_xy, axis_idx=0, linewidth=2, alpha=0.7)
     ax_x.set_xlabel('time [s]')
     ax_x.set_ylabel('x [px]')
     ax_x.set_title('x over time')
     ax_x.grid(True, alpha=0.3)
 
     if len(truth_xy) > 0:
-      ax_y.plot(truth_t, truth_xy[:, 1], '--', color='0.45', linewidth=2)
+      self.plotPeriodLine(
+        ax_y,
+        truth_t,
+        truth_xy,
+        axis_idx=1,
+        linestyle='--',
+        linewidth=2,
+        alpha=0.8)
       ax_y.scatter([truth_t[0], truth_t[-1]], [truth_xy[0, 1], truth_xy[-1, 1]],
                    marker='x', s=90, color='black', linewidths=2)
     if len(raw_xy) > 0:
-      ax_y.scatter(raw_t, raw_xy[:, 1], s=18, color='tab:green')
+      self.plotPeriodScatter(ax_y, raw_t, raw_xy, axis_idx=1, s=18, alpha=0.42)
     if len(filt_xy) > 0:
-      ax_y.plot(filt_t, filt_xy[:, 1], color=self.estimationColor(), linewidth=2)
+      self.plotPeriodLine(ax_y, filt_t, filt_xy, axis_idx=1, linewidth=2.4)
     if len(pred_xy) > 0:
-      ax_y.plot(pred_t, pred_xy[:, 1], color='tab:red', linewidth=2)
+      self.plotPeriodLine(ax_y, pred_t, pred_xy, axis_idx=1, linewidth=2, alpha=0.7)
     ax_y.set_xlabel('time [s]')
     ax_y.set_ylabel('y [px]')
     ax_y.set_title('y over time')
     ax_y.grid(True, alpha=0.3)
 
     handles, labels = ax_xy.get_legend_handles_labels()
-    fig.legend(handles, labels, ncol=min(len(labels), 5), loc='upper center', frameon=False)
+    fig.legend(
+      handles,
+      labels,
+      ncol=min(len(labels), 4),
+      loc='upper center',
+      bbox_to_anchor=(0.5, 0.91),
+      frameon=False)
 
-    fig.suptitle('Kalman Filter Trajectory Summary', fontsize=14)
+    fig.suptitle('Kalman Filter Trajectory Summary', fontsize=14, y=0.99)
     return fig
 
   def plotErrorFigure(self):
@@ -463,7 +583,13 @@ class KalmanEvoVisualizer(Node):
 
     ax.set_xlabel('time [s]')
     ax.set_ylabel('error [px]')
-    ax.set_title('APE / RPE over time')
+    rpe_delta_time = self.metric_report.get('rpe_delta_time_sec')
+    if rpe_delta_time is not None:
+      ax.set_title(
+        'APE / RPE over time (RPE %d frame(s) = %.4fs)' %
+        (self.evo_rpe_delta_frames, rpe_delta_time))
+    else:
+      ax.set_title('APE / RPE over time')
     ax.set_xlim(left=0.0, right=max(self.sample_duration_sec, 1e-6))
     ax.set_ylim(bottom=0.0)
     ax.grid(True, alpha=0.3)
@@ -471,10 +597,16 @@ class KalmanEvoVisualizer(Node):
 
     ape_rmse = self.getMetricRmse('ape')
     rpe_rmse = self.getMetricRmse('rpe')
+    if rpe_delta_time is not None:
+      rpe_delta_text = '%d frame(s) = %.4f s' % (
+        self.evo_rpe_delta_frames,
+        rpe_delta_time)
+    else:
+      rpe_delta_text = '%d frame(s)' % self.evo_rpe_delta_frames
     metrics_text = '\n'.join([
       'Overall APE RMSE: %s' % ('%.3f px' % ape_rmse if ape_rmse is not None else 'n/a'),
       'Overall RPE RMSE: %s' % ('%.3f px' % rpe_rmse if rpe_rmse is not None else 'n/a'),
-      'RPE delta: %d frame(s)' % self.evo_rpe_delta_frames,
+      'RPE delta: %s' % rpe_delta_text,
     ])
     ax.text(
       0.98,

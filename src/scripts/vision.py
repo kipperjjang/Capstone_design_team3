@@ -19,34 +19,37 @@ class VisionNode(Node):
 
     self.declare_parameter("config_path", "")
     self.declare_parameter("yolo_model_path", "yolo_models/robot_yolo_p4_416_combine/weights/best.pt")
+    self.declare_parameter("publish_image", False)
+    self.declare_parameter("max_motion_dt", 0.5)
 
     self.config_path = self.get_parameter("config_path").value
     self.config = load_runtime_config(self.config_path)
     vision_config = self.config.get("vision", {})
 
-    self.declare_parameter("vision_topic", vision_config.get("topic_live", "/vision"))
-    self.declare_parameter("image_topic", vision_config.get("image_topic", "/vision/image"))
-    self.declare_parameter("publish_state", vision_config.get("publish_state", True))
-    self.declare_parameter("publish_image", vision_config.get("publish_image", True))
-
-    self.vision_topic = self.get_parameter("vision_topic").value
-    self.image_topic = self.get_parameter("image_topic").value
-    self.publish_state = self.get_parameter("publish_state").value
     self.publish_image = self.get_parameter("publish_image").value
+    self.max_motion_dt = float(self.get_parameter("max_motion_dt").value)
     self.yolo_model_path = self.get_parameter("yolo_model_path").value
 
     self.target_class = int(vision_config.get("target_class", 1))
     self.confidence = float(vision_config.get("confidence", 0.2))
-
+    self.box_size = np.zeros(2, dtype=np.float32)
+    
     self.bridge = CvBridge()
     self.capture = cv2.VideoCapture(0)
     self.model = YOLO(self.yolo_model_path)
     self.position = np.zeros(2, dtype=np.float32)
+    self.velocity = np.zeros(2, dtype=np.float32)
+    self.acceleration = np.zeros(2, dtype=np.float32)
+    self.has_velocity = False
+    self.has_acceleration = False
+    self.prev_position = None
+    self.prev_velocity = None
+    self.prev_sample_time = None
     self.is_detected = False
     self.img = None
 
-    self.state_pub = self.create_publisher(VisionMsg, self.vision_topic, 10) if self.publish_state else None
-    self.image_pub = self.create_publisher(Image, self.image_topic, 10) if self.publish_image else None
+    self.state_pub = self.create_publisher(VisionMsg, "/vision", 10)
+    self.image_pub = self.create_publisher(Image, "/vision/image", 10) if self.publish_image else None
 
   def read_img(self):
     ret, frame = self.capture.read()
@@ -73,25 +76,64 @@ class VisionNode(Node):
     confidences = boxes.conf.cpu().numpy()
     best_index = int(np.argmax(confidences))
     x1, y1, x2, y2 = boxes.xyxy.cpu().numpy()[best_index]
+    self.box_size = np.abs(np.array([x2 - x1, y2 - y1]))
     self.position = np.array([(x1 + x2) / 2.0, (y1 + y2) / 2.0], dtype=np.float32)
     self.is_detected = True
 
-  def publish(self):
-    stamp = self.get_clock().now().to_msg()
+  def reset_motion_estimate(self):
+    self.velocity = np.zeros(2, dtype=np.float32)
+    self.acceleration = np.zeros(2, dtype=np.float32)
+    self.has_velocity = False
+    self.has_acceleration = False
+    self.prev_position = None
+    self.prev_velocity = None
+    self.prev_sample_time = None
 
-    if self.state_pub is not None:
-      msg = VisionMsg()
-      msg.header.stamp = stamp
-      msg.detected = self.is_detected
-      msg.tracked = False
-      msg.p = self.position.tolist()
-      msg.v = []
-      msg.a = []
-      msg.bbox = [0.0, 0.0]
-      msg.confidence = float(self.confidence)
-      msg.covariance = []
-      msg.source_mode = "live"
-      self.state_pub.publish(msg)
+  def update_motion_estimate(self, sample_time):
+    if not self.is_detected:
+      self.reset_motion_estimate()
+      return
+
+    if self.prev_position is not None and self.prev_sample_time is not None:
+      dt = sample_time - self.prev_sample_time
+      if 0.0 < dt <= self.max_motion_dt:
+        self.velocity = ((self.position - self.prev_position) / dt).astype(np.float32)
+        self.has_velocity = True
+
+        if self.prev_velocity is not None:
+          self.acceleration = ((self.velocity - self.prev_velocity) / dt).astype(np.float32)
+          self.has_acceleration = True
+        else:
+          self.acceleration = np.zeros(2, dtype=np.float32)
+          self.has_acceleration = False
+      else:
+        self.velocity = np.zeros(2, dtype=np.float32)
+        self.acceleration = np.zeros(2, dtype=np.float32)
+        self.has_velocity = False
+        self.has_acceleration = False
+
+    self.prev_position = self.position.copy()
+    self.prev_velocity = self.velocity.copy() if self.has_velocity else None
+    self.prev_sample_time = sample_time
+
+  def publish(self):
+    now = self.get_clock().now()
+    sample_time = now.nanoseconds * 1e-9
+    stamp = now.to_msg()
+    self.update_motion_estimate(sample_time)
+
+    msg = VisionMsg()
+    msg.header.stamp = stamp
+    msg.detected = self.is_detected
+    msg.tracked = self.has_velocity
+    msg.p = self.position.tolist()
+    msg.v = self.velocity.tolist() if self.has_velocity else []
+    msg.a = self.acceleration.tolist() if self.has_acceleration else []
+    msg.bbox = self.box_size
+    msg.confidence = float(self.confidence)
+    msg.covariance = []
+    msg.source_mode = "YOLO"
+    self.state_pub.publish(msg)
 
     if self.image_pub is not None and self.img is not None:
       image_msg = self.bridge.cv2_to_imgmsg(self.img, encoding="bgr8")

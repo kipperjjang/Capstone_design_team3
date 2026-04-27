@@ -1,11 +1,5 @@
 # vision parameters
 vision:
-  source:                 live
-  topic_live:             /vision
-  topic_test:             /vision/test
-  image_topic:            /vision/image
-  publish_state:          true
-  publish_image:          true
   target_class:           1
   confidence:             0.2
 

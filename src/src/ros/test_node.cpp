@@ -84,11 +84,13 @@ void TestNode::publishDebug(const RobotState &estimated_state, bool has_raw, boo
   if (has_raw_state_) {
     fillVector2(msg.raw_p, last_raw_state_.p);
     fillVector2(msg.raw_v, last_raw_state_.v);
+    fillVector2(msg.raw_a, last_raw_state_.a);
     msg.detected = last_raw_state_.detected;
     msg.tracked = last_raw_state_.tracked;
   }
   fillVector2(msg.estimated_p, estimated_state.p);
   fillVector2(msg.estimated_v, estimated_state.v);
+  fillVector2(msg.estimated_a, estimated_state.a);
 
   msg.has_raw = has_raw;
   msg.estimator_initialized = estimator_->isInitialized();
