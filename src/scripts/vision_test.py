@@ -16,10 +16,10 @@ class VisionTest(Node):
   def __init__(self):
     super().__init__('vision_test')
 
-    self.declare_parameter('mode', 'realtime') # offline, realtime
+    self.declare_parameter('mode', 'offline') # offline, realtime
     self.declare_parameter('debug_topic', '/test/debug')
     self.declare_parameter('image_topic', '/vision/image')
-    self.declare_parameter('collection_duration_sec', 10.0)
+    self.declare_parameter('collection_duration_sec', 20.0)
     self.declare_parameter('history_size', 100)
     self.declare_parameter('draw_prediction_included', True)
     self.declare_parameter('width', 1280)

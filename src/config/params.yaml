@@ -21,7 +21,7 @@ estimator:
   camera:
     focal_length:         0.01
   kalman:
-    q_acc:                10000.0
+    q_acc:                1000.0
     r_detected:           900.0
     r_tracked:            900.0
     r_temp_vel:           100.0
@@ -29,7 +29,7 @@ estimator:
     p0_pos:               900.0
     p0_vel:               900.0
     p0_acc:               4000.0
-    max_time_gap:         0.5
+    max_time_gap:         0.05
 
 bridge:
   serial:

@@ -1,5 +1,5 @@
 # YOLO weights
-*.pt
+/yolo_models/robot_yolo_p4_416
 
-# pacache
-/__pycache__
+# pycache
+**/__pycache__/

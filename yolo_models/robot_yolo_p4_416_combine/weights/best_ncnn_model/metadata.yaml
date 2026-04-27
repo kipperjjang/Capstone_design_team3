@@ -1,0 +1,20 @@
+description: Ultralytics YOLOv8n-p4 model trained on my_dataset.yaml
+author: Ultralytics
+date: '2026-04-13T03:10:32.907149'
+version: 8.4.30
+license: AGPL-3.0 License (https://ultralytics.com/license)
+docs: https://docs.ultralytics.com
+stride: 16
+task: detect
+batch: 1
+imgsz:
+- 416
+- 416
+names:
+  0: pillar
+  1: bell
+args:
+  batch: 1
+  half: false
+channels: 3
+end2end: false
