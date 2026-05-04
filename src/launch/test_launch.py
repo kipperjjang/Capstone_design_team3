@@ -30,8 +30,8 @@ def generate_launch_description():
   python_node = Node(
     package = 'capstone',
     # executable = 'test_visualizer.py',
-    # executable = 'test_kalman_evo.py',
-    executable = 'sample_training_data.py',
+    executable = 'test_kalman_evo.py',
+    # executable = 'sample_training_data.py',
     name = 'python_node',
     output = 'screen',
   )

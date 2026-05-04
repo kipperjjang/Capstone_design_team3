@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <memory>
 #include <vector>
 
@@ -19,7 +20,10 @@ private:
   void timerCallback();
   
   // Utils
+  bool writeSerialFrame(const custom_msgs::msg::ControlMsg &msg);
+  bool writeFrameToSerial(const std::vector<uint8_t> &frame);
   bool readSerialFrame();
+  bool parseReadFrames(std::vector<uint8_t> &buffer);
 
   // ROS
   rclcpp::Subscription<custom_msgs::msg::ControlMsg>::SharedPtr control_sub_;
@@ -27,8 +31,9 @@ private:
   rclcpp::TimerBase::SharedPtr watchdog_timer_;
 
   // Serial
-  std::vector<std::unique_ptr<Serial>> input_;
-  std::vector<std::unique_ptr<Serial>> output_;
+  std::unique_ptr<Serial> serial_;
   std::vector<uint8_t> buffer_;
-  bool warned_about_protocol_{false};
+  std::vector<uint8_t> last_write_frame_;
+  uint8_t write_seq_{0x11};
+  bool previous_read_status_{true};
 };

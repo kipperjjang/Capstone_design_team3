@@ -121,10 +121,10 @@ void KalmanFilter::updatePosition(const Eigen::Vector2d &p, const Eigen::Matrix2
 
 void KalmanFilter::updateVelocity(const Eigen::Vector2d &v, const Eigen::Matrix2d &R) {
   if (!initialized_) return;
-  update(v, H_.block(2, 0, 2, 6), R, x_);
+  update(v, H_.block(2, 0, 2, 6), R, x_pred_);
 }
 
 void KalmanFilter::updateAcceleration(const Eigen::Vector2d &a, const Eigen::Matrix2d &R) {
   if (!initialized_) return;
-  update(a, H_.block(4, 0, 2, 6), R, x_);
+  update(a, H_.block(4, 0, 2, 6), R, x_pred_);
 }

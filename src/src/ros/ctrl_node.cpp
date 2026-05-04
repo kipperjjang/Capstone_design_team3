@@ -27,7 +27,7 @@ CtrlNode::CtrlNode() : Node("control_node") {
   // Subscriber and Publisher
   vision_sub_ = this->create_subscription<custom_msgs::msg::VisionMsg>(
     vision_topic, 1, std::bind(&CtrlNode::visionCallback, this, _1));
-  control_pub_ = this->create_publisher<custom_msgs::msg::ControlMsg>("/control", 10);
+  ctrl_pub_ = this->create_publisher<custom_msgs::msg::ControlMsg>("/control", 10);
 
   const int period = static_cast<int>(1000.0 / controller_config.hz);
   timer_ = this->create_wall_timer(std::chrono::milliseconds(period), std::bind(&CtrlNode::timerCallback, this));
@@ -92,5 +92,5 @@ void CtrlNode::publishControl(const ControlState &x) {
   msg.u_pitch = static_cast<float>(x.u_pitch);
   msg.fire = x.fire;
   msg.reload = x.reload;
-  control_pub_->publish(msg);
+  ctrl_pub_->publish(msg);
 }

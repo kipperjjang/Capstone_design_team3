@@ -21,32 +21,22 @@ estimator:
   camera:
     focal_length:         0.01
   kalman:
-    q_acc:                1000.0
-    r_detected:           900.0
-    r_tracked:            900.0
-    r_temp_vel:           100.0
-    r_temp_acc:           1000.0
+    q_acc:                1e+6
+    r_detected:           25.0
+    r_tracked:            25.0
+    r_temp_vel:           100
+    r_temp_acc:           400
     p0_pos:               900.0
-    p0_vel:               900.0
-    p0_acc:               4000.0
-    max_time_gap:         0.05
+    p0_vel:               100
+    p0_acc:               400
+    max_time_gap:         0.5
 
 bridge:
   serial:
-    input:
-      name:               ["joint0", "joint1"]
-      port:               ["/dev/ttyUSB0", "/dev/ttyUSB1"]  # Joint data from encoder
-      baud:               [115200, 115200]
-      data_bits:          [8, 8]
-      stop_bits:          [1, 1]
-      parity:             [0, 0]
-
-    output:
-      name:               ["yaw", "pitch"]
-      port:               ["/dev/ttyUSB3", "/dev/ttyUSB4"]  # Write joint data to motor
-      baud:               [115200, 115200]
-      data_bits:          [8, 8]
-      stop_bits:          [1, 1]
-      parity:             [0, 0]
-
+    name:                 "usb"
+    port:                 "/dev/ttyUSB0"  # Read/write bridge frames
+    baud:                 115200
+    data_bits:            8
+    stop_bits:            1
+    parity:               0
     watchdog_frequency:   1000

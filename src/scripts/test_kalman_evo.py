@@ -28,7 +28,7 @@ class KalmanEvoVisualizer(Node):
     self.declare_parameter('test_amplitude_x', 120.0)
     self.declare_parameter('test_amplitude_y', 80.0)
     self.declare_parameter('test_frequency_hz', 0.5)
-    self.declare_parameter('test_position_noise_std', 30.0)
+    self.declare_parameter('test_position_noise_std', 5.0)
     self.declare_parameter('random_seed', 0)
     self.declare_parameter('use_fixed_view', True)
     self.declare_parameter('view_min_x', 0.0)
