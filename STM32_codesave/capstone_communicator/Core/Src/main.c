@@ -22,6 +22,8 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 
+#include "string.h"
+
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -31,6 +33,25 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+
+#define UART_SOF_0      0xAA
+#define UART_SOF_1      0x55
+
+#define PC_CMD_LEN      9
+#define PC_FB_LEN       25
+
+#define STAT_OK         0x00
+#define STAT_CRC_ERR    (1 << 0)
+#define STAT_LEN_ERR    (1 << 1)
+#define STAT_SEQ_ERR    (1 << 2)
+#define STAT_TIMEOUT    (1 << 3)
+
+#define CMD_AIM         (1 << 0)
+#define CMD_SHOOT       (1 << 1)
+#define CMD_STOP        (1 << 2)
+
+#define P_MAX   20.0f
+#define D_MAX   1.0f
 
 /* USER CODE END PD */
 
@@ -75,9 +96,38 @@ uint8_t CAN_receive_status = 0;
 uint16_t tx_seq = 0;
 uint32_t last_can_tick = 0;
 
-float pos1, pos2;
 uint8_t send = 0;
 
+float yaw_P = 5.0f;
+float yaw_D = 0.2f;
+
+float pitch_P = 3.0f;
+float pitch_D = 0.1f;
+
+
+// UART data
+uint8_t uart_rx_byte;
+
+uint8_t pc_prev_status = STAT_OK;   // PC가 이전에 받은 중계기 프레임 상태
+uint8_t stm_prev_status = STAT_OK;  // 중계기가 이전에 받은 PC 프레임 상태
+
+uint8_t uart_tx_seq = 0;
+uint8_t pc_last_seq = 0;
+uint8_t pc_seq_valid = 0;
+
+float target_yaw = 0.0f;
+float target_pitch = 0.0f;
+uint8_t pc_cmd = 1;
+
+float yaw_angle = 0.0f;
+float yaw_velocity = 0.0f;
+float yaw_torque = 0.0f;
+float pitch_angle = 0.0f;
+float pitch_velocity = 0.0f;
+float pitch_torque = 0.0f;
+uint8_t system_error = 0;
+
+float sweep_speed = 0.005f;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -92,18 +142,229 @@ static void MX_CAN1_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-
-float deg_to_14bit(float deg){
-	uint16_t bit = 0;
-
-	return bit;
+static inline int32_t float_to_i32_scaled(float x, float scale){
+    return (int32_t)(x * scale);
 }
 
+static inline int16_t float_to_i16_scaled(float x, float scale){
+    return (int16_t)(x * scale);
+}
+
+static void CAN_SendCmd(uint32_t id, float pos, float P, float D, uint8_t cmd, uint8_t seq){
+
+    int32_t pos_q = (int32_t)(pos * 1000000.0f);
+
+    uint8_t P_q = (uint8_t)( (P / P_MAX) * 255.0f );
+    uint8_t D_q = (uint8_t)( (D / D_MAX) * 255.0f );
+
+    Tx_Data[0] = pos_q & 0xFF;
+    Tx_Data[1] = (pos_q >> 8) & 0xFF;
+    Tx_Data[2] = (pos_q >> 16) & 0xFF;
+    Tx_Data[3] = (pos_q >> 24) & 0xFF;
+
+    Tx_Data[4] = P_q;
+    Tx_Data[5] = D_q;
+
+    Tx_Data[6] = cmd;
+    Tx_Data[7] = seq;
+
+    Tx_Header.StdId = id;
+
+    CAN_transmit_status =
+        (HAL_CAN_AddTxMessage(&hcan1, &Tx_Header, Tx_Data, &Tx_Mailbox) == HAL_OK);
+}
 
 void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan){
-    if (hcan->Instance == CAN1){
-    	CAN_receive_status = (HAL_CAN_GetRxMessage(hcan, CAN_RX_FIFO0, &RxHeader, RxData) == HAL_OK);
+    if (hcan->Instance != CAN1) return;
+
+    if (HAL_CAN_GetRxMessage(hcan, CAN_RX_FIFO0, &RxHeader, RxData) != HAL_OK)
+        return;
+
+    uint32_t id = RxHeader.StdId;
+
+    int16_t pos_q   = (int16_t)(RxData[0] | (RxData[1] << 8));
+    int16_t vel_q   = (int16_t)(RxData[2] | (RxData[3] << 8));
+    int16_t torque_q= (int16_t)(RxData[4] | (RxData[5] << 8));
+
+    float pos = (float)pos_q / 10000.0f;
+    float vel = (float)vel_q / 1000.0f;
+    float torque = (float)torque_q / 1000.0f;
+
+    if(id == NODE0_STA_ID){
+        yaw_angle = pos;
+        yaw_velocity = vel;
+        yaw_torque = torque;
     }
+    else if(id == NODE1_STA_ID){
+        pitch_angle = pos;
+        pitch_velocity = vel;
+        pitch_torque = torque;
+    }
+}
+
+static uint16_t CRC16_CCITT(const uint8_t *data, uint16_t len){
+    uint16_t crc = 0xFFFF;
+
+    for (uint16_t i = 0; i < len; i++){
+        crc ^= ((uint16_t)data[i] << 8);
+
+        for (uint8_t j = 0; j < 8; j++){
+            if (crc & 0x8000)
+                crc = (crc << 1) ^ 0x1021;
+            else
+                crc <<= 1;
+        }
+    }
+    return crc;
+}
+
+static void UART_ProcessPCFrame(uint8_t *body){
+    // body = prev_status, len, seq, data..., crc_l, crc_h
+    uint8_t rx_prev_status = body[0];
+    uint8_t len = body[1];
+    uint8_t seq = body[2];
+
+    pc_prev_status = rx_prev_status;
+
+    if (len != PC_CMD_LEN){
+        stm_prev_status = STAT_LEN_ERR;
+        return;
+    }
+
+    uint16_t crc_rx = (uint16_t)body[3 + len] | ((uint16_t)body[4 + len] << 8);
+    uint16_t crc_calc = CRC16_CCITT(body, 3 + len);
+
+    if (crc_rx != crc_calc){
+        stm_prev_status = STAT_CRC_ERR;
+        return;
+    }
+
+    if (pc_seq_valid){
+        uint8_t expected = pc_last_seq + 1;
+        if (seq != expected){
+            stm_prev_status = STAT_SEQ_ERR;
+            // seq error가 있어도 CRC가 맞으면 데이터는 사용할 수 있게 둠
+        }
+        else{
+            stm_prev_status = STAT_OK;
+        }
+    }
+    else{
+        pc_seq_valid = 1;
+        stm_prev_status = STAT_OK;
+    }
+
+    pc_last_seq = seq;
+
+    memcpy(&target_yaw,   &body[3], 4);
+    memcpy(&target_pitch, &body[7], 4);
+    pc_cmd = body[11];
+
+    if (pc_cmd & CMD_STOP){
+        shoot = 0;
+        send = 0;
+    }
+
+    if (pc_cmd & CMD_AIM){
+        send = 1;
+    }
+
+    if (pc_cmd & CMD_SHOOT){
+        shoot = 1;
+    }
+}
+
+static void UART_ParseByte(uint8_t b){
+    static uint8_t state = 0;
+    static uint8_t body[3 + PC_FB_LEN + 2];
+    static uint8_t idx = 0;
+    static uint8_t expected_total = 0;
+
+    switch (state){
+    case 0: // SOF0
+        if (b == UART_SOF_0) state = 1;
+        break;
+
+    case 1: // SOF1
+        if (b == UART_SOF_1){
+            idx = 0;
+            expected_total = 0;
+            state = 2;
+        }
+        else{
+            state = 0;
+        }
+        break;
+
+    case 2: // body read
+        body[idx++] = b;
+
+        if (idx == 2){
+            uint8_t len = body[1];
+
+            if (len != PC_CMD_LEN){
+                stm_prev_status = STAT_LEN_ERR;
+                state = 0;
+                idx = 0;
+                return;
+            }
+
+            expected_total = 3 + len + 2;
+        }
+
+        if (expected_total > 0 && idx >= expected_total){
+            UART_ProcessPCFrame(body);
+            state = 0;
+            idx = 0;
+        }
+
+        if (idx >= sizeof(body)){
+            state = 0;
+            idx = 0;
+            stm_prev_status = STAT_LEN_ERR;
+        }
+        break;
+
+    default:
+        state = 0;
+        idx = 0;
+        break;
+    }
+}
+
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart){
+    if (huart->Instance == USART2){
+        UART_ParseByte(uart_rx_byte);
+        HAL_UART_Receive_IT(&huart2, &uart_rx_byte, 1);
+    }
+}
+
+static void UART_SendFeedback(void){
+    uint8_t tx[32];
+    uint8_t idx = 0;
+
+    tx[idx++] = UART_SOF_0;
+    tx[idx++] = UART_SOF_1;
+
+    tx[idx++] = stm_prev_status;
+    tx[idx++] = PC_FB_LEN;
+    tx[idx++] = uart_tx_seq++;
+
+    memcpy(&tx[idx], &yaw_angle, 4);      idx += 4;
+    memcpy(&tx[idx], &yaw_velocity, 4);   idx += 4;
+    memcpy(&tx[idx], &yaw_torque, 4);     idx += 4;
+    memcpy(&tx[idx], &pitch_angle, 4);    idx += 4;
+    memcpy(&tx[idx], &pitch_velocity, 4); idx += 4;
+    memcpy(&tx[idx], &pitch_torque, 4);   idx += 4;
+
+    tx[idx++] = system_error;
+
+    uint16_t crc = CRC16_CCITT(&tx[2], 3 + PC_FB_LEN);
+
+    tx[idx++] = crc & 0xFF;
+    tx[idx++] = (crc >> 8) & 0xFF;
+
+    HAL_UART_Transmit(&huart2, tx, sizeof(tx), 10);
 }
 /* USER CODE END 0 */
 
@@ -160,6 +421,11 @@ int main(void)
   CAN_setting_status |= (HAL_CAN_ActivateNotification(&hcan1, CAN_IT_RX_FIFO0_MSG_PENDING) == HAL_OK) <<6; // CAN1 Rx ISR enable
   CAN_setting_status |= (HAL_OK == HAL_CAN_Start(&hcan1))                                             <<5; //CAN1 start
 
+  HAL_NVIC_SetPriority(USART2_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(USART2_IRQn);
+
+  HAL_UART_Receive_IT(&huart2, &uart_rx_byte, 1);
+
   Tx_Header.StdId = NODE0_CMD_ID;
   Tx_Header.ExtId = 0;
   Tx_Header.IDE   = CAN_ID_STD;
@@ -168,18 +434,20 @@ int main(void)
   Tx_Header.TransmitGlobalTime = DISABLE;
 
   if(PWM_check != 0x03){
-	  _disable_irq();
+	  //_disable_irq();
 	  while(1){
 
 	  }
   }
 
   if(CAN_setting_status != 0xE0){
- 	  _disable_irq();
+ 	  //_disable_irq();
  	  while(1){
 
  	  }
   }
+
+
 
   /* USER CODE END 2 */
 
@@ -202,13 +470,41 @@ int main(void)
 
 	  HAL_Delay(20);*/
 
-	  if(send){
-		  send = 0;
-		  Tx_Header.StdId = NODE0_CMD_ID;
-		  CAN_transmit_status = (HAL_CAN_AddTxMessage(&hcan1, &Tx_Header, Tx_Data, &Tx_Mailbox) == HAL_OK);
-	  }
+//	  if(send){
+//		  send = 0;
+//		  Tx_Header.StdId = NODE0_CMD_ID;
+//		  CAN_transmit_status = (HAL_CAN_AddTxMessage(&hcan1, &Tx_Header, Tx_Data, &Tx_Mailbox) == HAL_OK);
+//	  }
+//
+//	  HAL_Delay(100);
 
-	  HAL_Delay(100);
+	  /*if(send){
+	      send = 0;
+
+	      uint8_t seq = tx_seq++;
+
+	      float P = 5.0f;   // 초기값
+	      float D = 0.2f;
+
+	      CAN_SendCmd(NODE0_CMD_ID, target_yaw, P, D, pc_cmd, seq);
+	      CAN_SendCmd(NODE1_CMD_ID, target_pitch, P, D, pc_cmd, seq);
+	  }*/
+
+	  uint8_t seq = tx_seq++;
+
+	  target_yaw += sweep_speed;
+	  target_pitch += sweep_speed;
+	  if(target_yaw >= 3.141592f / 4.0f)
+		  sweep_speed = -sweep_speed;
+	  if(target_yaw <= -3.141592f / 4.0f)
+		  sweep_speed = -sweep_speed;
+
+	  CAN_SendCmd(NODE0_CMD_ID, target_yaw, yaw_P, yaw_D, pc_cmd, seq);
+	  CAN_SendCmd(NODE1_CMD_ID, target_pitch, pitch_P, pitch_D, pc_cmd, seq);
+
+	  //UART_SendFeedback();
+
+	  HAL_Delay(20);   // 50 Hz feedback
 
   }
   /* USER CODE END 3 */
