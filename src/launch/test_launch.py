@@ -20,13 +20,13 @@ def generate_launch_description():
     executable = 'test_node',
     name = 'test_node',
     output = 'screen',
-    # prefix = 'xterm -e gdb -ex run --args',
+    prefix = 'xterm -e gdb -ex run --args',
     parameters = [
       {'config_path':          config_path},
     ],
   )
 
-  # Simulator Node
+  #Simulator Node
   python_node = Node(
     package = 'capstone',
     # executable = 'test_visualizer.py',

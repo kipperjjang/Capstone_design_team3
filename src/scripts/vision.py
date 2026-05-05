@@ -98,7 +98,7 @@ class VisionNode(Node):
 
     self.declare_parameter("config_path", "")
     self.declare_parameter("yolo_model_path", "/home/capstonet3/ros2_ws/src/capstone/yolo_models/robot_yolo_p4_416_combine/weights/best.engine")
-    self.declare_parameter("publish_image", False)
+    self.declare_parameter("publish_image", True)
     self.declare_parameter("max_motion_dt", 0.5)
 
     self.config_path = self.get_parameter("config_path").value
@@ -168,6 +168,7 @@ class VisionNode(Node):
         self.img,
         imgsz=416,
         conf=0.70,
+        classes=[1],
         verbose=False,
     )
 
@@ -202,19 +203,25 @@ class VisionNode(Node):
       self.reset_motion_estimate()
       return
 
+    # LPF coefficient
+    a_ = 0.8
+
     if self.prev_position is not None and self.prev_sample_time is not None:
       dt = sample_time - self.prev_sample_time
       if 0.0 < dt <= self.max_motion_dt:
-        self.velocity = ((self.position - self.prev_position) / dt).astype(np.float32)
+        # LPF velocity
+        self.velocity = a_ *self.velocity + (1-a_) * ((self.position - self.prev_position) / dt).astype(np.float32)
         self.has_velocity = True
-
+        
         if self.prev_velocity is not None:
-          self.acceleration = ((self.velocity - self.prev_velocity) / dt).astype(np.float32)
+          # LPF acceleration
+          self.acceleration = a_ * self.acceleration + (1-a_) * ((self.velocity - self.prev_velocity) / dt).astype(np.float32)
           self.has_acceleration = True
         else:
           self.acceleration = np.zeros(2, dtype=np.float32)
           self.has_acceleration = False
       else:
+        # Reset
         self.velocity = np.zeros(2, dtype=np.float32)
         self.acceleration = np.zeros(2, dtype=np.float32)
         self.has_velocity = False

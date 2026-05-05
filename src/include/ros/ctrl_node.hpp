@@ -16,7 +16,7 @@ public:
 private:
   // Callback function
   void visionCallback(const custom_msgs::msg::VisionMsg::SharedPtr msg);
-  // void jointCallback(const custom_msgs::msg::JointMsg::SharedPtr msg);
+  void jointCallback(const custom_msgs::msg::JointMsg::SharedPtr msg);
   void timerCallback();
   
   void publishControl(const ControlState &x);
@@ -26,7 +26,11 @@ private:
   // rclcpp::Subscription<custom_msgs::msg::JointMsg>::SharedPtr joint_sub_;
   rclcpp::Publisher<custom_msgs::msg::ControlMsg>::SharedPtr ctrl_pub_;
   rclcpp::TimerBase::SharedPtr timer_;
+  rclcpp::Time last_joint_time_;
 
+  bool first_joint_{false};
+  Eigen::Vector2d joint_, joint_vel_;
+  
   std::unique_ptr<Estimator> estimator_;
   std::unique_ptr<Controller> controller_;
 };

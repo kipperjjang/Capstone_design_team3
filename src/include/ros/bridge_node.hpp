@@ -34,6 +34,6 @@ private:
   std::unique_ptr<Serial> serial_;
   std::vector<uint8_t> buffer_;
   std::vector<uint8_t> last_write_frame_;
-  uint8_t write_seq_{0x11};
+  uint8_t write_seq_{0x00};
   bool previous_read_status_{true};
 };

@@ -33,21 +33,21 @@ CtrlNode::CtrlNode() : Node("control_node") {
   timer_ = this->create_wall_timer(std::chrono::milliseconds(period), std::bind(&CtrlNode::timerCallback, this));
 }
 
-// void CtrlNode::jointCallback(const custom_msgs::msg::JointMsg::SharedPtr msg) {
-//   // Cache joint data
-//   auto now = this->now();
-//   if (first_joint_) {
-//     last_joint_time_ = now;
-//     first_joint_ = false;
-//   }
-//   const double dt = (now - last_joint_time_).seconds();
+void CtrlNode::jointCallback(const custom_msgs::msg::JointMsg::SharedPtr msg) {
+  // Cache joint data
+  auto now = this->now();
+  if (first_joint_) {
+    last_joint_time_ = now;
+    first_joint_ = false;
+  }
+  const double dt = (now - last_joint_time_).seconds();
 
-//   joint_ = toEigen(msg->joint);
-//   joint_vel_ = toEigen(msg->joint_vel);
-//   if (estimator_.isInitialized()) {
-//     estimator_.update(joint_, joint_vel_, dt); 
-//   }
-// }
+  joint_ = toEigen(msg->joint);
+  joint_vel_ = toEigen(msg->joint_vel);
+  if (estimator_.isInitialized()) {
+    estimator_.update(joint_, joint_vel_, dt); 
+  }
+}
 
 void CtrlNode::visionCallback(const custom_msgs::msg::VisionMsg::SharedPtr msg) {
   if (msg == nullptr || msg->p.size() < 2) return;

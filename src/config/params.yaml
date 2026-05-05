@@ -22,19 +22,19 @@ estimator:
     focal_length:         0.01
   kalman:
     q_acc:                1e+6
-    r_detected:           25.0
-    r_tracked:            25.0
-    r_temp_vel:           100
-    r_temp_acc:           400
-    p0_pos:               900.0
-    p0_vel:               100
-    p0_acc:               400
-    max_time_gap:         0.5
+    r_detected:           10.0
+    r_tracked:            10.0
+    r_temp_vel:           900
+    r_temp_acc:           54000
+    p0_pos:               10.0
+    p0_vel:               900
+    p0_acc:               54000
+    max_time_gap:         0.15
 
 bridge:
   serial:
     name:                 "usb"
-    port:                 "/dev/ttyUSB0"  # Read/write bridge frames
+    port:                 "/dev/ttyACM0"  # Read/write bridge frames
     baud:                 115200
     data_bits:            8
     stop_bits:            1

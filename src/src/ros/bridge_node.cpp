@@ -12,7 +12,7 @@ using std::placeholders::_1;
 
 namespace {
 
-constexpr std::array<uint8_t, 2> kSof{{0xAA, 0xFF}};
+constexpr std::array<uint8_t, 2> kSof{{0xAA, 0x55}};
 constexpr size_t  kHeaderSize = 5;
 constexpr size_t  kCrcSize = 2;
 constexpr size_t  kWritePayloadSize = 9;
@@ -57,20 +57,24 @@ std::vector<uint8_t> makeControlFrame(
   frame.push_back(previous_read_status ? kStatusOk : kStatusFailed);
   frame.push_back(static_cast<uint8_t>(kWritePayloadSize));
   frame.push_back(seq);
+
   appendBytes(frame, &msg.u_yaw, sizeof(msg.u_yaw));
   appendBytes(frame, &msg.u_pitch, sizeof(msg.u_pitch));
 
   uint8_t flags = 0;
   if (msg.fire) {
-    flags |= 0x01;
+    flags |= 0x02;   // STM 기준 CMD_SHOOT = bit 1
   }
   if (msg.reload) {
-    flags |= 0x02;
+    flags |= 0x04;   // 임시로 STOP에 매핑하거나, 별도 정의 필요
   }
+
   frame.push_back(flags);
 
-  const uint16_t crc = crc16Ccitt(frame.data(), frame.size());
-  appendBytes(frame, &crc, sizeof(crc));
+  const uint16_t crc = crc16Ccitt(frame.data() + kSof.size(), frame.size() - kSof.size());
+
+  frame.push_back(static_cast<uint8_t>(crc & 0xFF));
+  frame.push_back(static_cast<uint8_t>((crc >> 8) & 0xFF));
 
   return frame;
 }
@@ -181,7 +185,10 @@ bool BridgeNode::parseReadFrames(std::vector<uint8_t> &buffer) {
     // CRC16 check
     uint16_t received_crc = 0;
     std::memcpy(&received_crc, buffer.data() + frame_size - kCrcSize, sizeof(received_crc));
-    const uint16_t computed_crc = crc16Ccitt(buffer.data(), frame_size - kCrcSize);
+    const uint16_t computed_crc = crc16Ccitt(buffer.data() + kSof.size(), frame_size - kSof.size() - kCrcSize);
+    
+    // std::cout << "CRC received:\t" << received_crc << std::endl;
+    // std::cout << "CRC computed:\t" << computed_crc << std::endl;
     if (received_crc != computed_crc) {
       previous_read_status_ = false;
       RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000, "Dropping serial frame with invalid CRC16.");
@@ -205,9 +212,9 @@ bool BridgeNode::parseReadFrames(std::vector<uint8_t> &buffer) {
     // Publish joint values
     custom_msgs::msg::JointMsg msg;
     msg.header.stamp = this->now();
-    msg.joint = {values[0], values[1]};
-    msg.joint_vel = {values[2], values[3]};
-    msg.joint_torque = {values[4], values[5]};
+    msg.joint = {values[0], values[3]};
+    msg.joint_vel = {values[1], values[4]};
+    msg.joint_torque = {values[2], values[5]};
     joint_pub_->publish(msg);
 
     parsed_frame = true;

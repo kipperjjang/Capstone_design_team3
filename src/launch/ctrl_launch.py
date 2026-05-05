@@ -6,24 +6,12 @@ from ament_index_python.packages import get_package_share_directory
 import os
 import yaml
 
-
-def _load_config(path):
-  with open(path, "r", encoding="utf-8") as stream:
-    return yaml.safe_load(stream) or {}
-
-
 def generate_launch_description():
   # Directory for the package
   pkg_dir = get_package_share_directory('capstone')
   
   # Path to configuration and model files
   config_path       = os.path.join(pkg_dir, 'config', 'params.yaml')
-  # urdf_path         = os.path.join(pkg_dir, 'models', 'urdf', 'uam_3dof.urdf')
-  # xml_path          = os.path.join(pkg_dir, 'models', 'xml', 'uam_3dof.xml')
-
-  # LaunchConfiguration
-  config = _load_config(config_path)
-  vision_config = config.get("vision", {})
   
   # HW-ROS bridge node
   bridge_node = Node(
@@ -49,7 +37,7 @@ def generate_launch_description():
     ],
   )
 
-  # Simulator Node
+  # Vison Node
   vision_node = Node(
     package = 'capstone',
     executable = 'vision.py',
