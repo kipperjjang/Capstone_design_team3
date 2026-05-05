@@ -102,7 +102,7 @@ uint8_t CAN_setting_status = 0;
 uint8_t CAN_receive_status = 0;
 uint8_t CAN_transmit_status = 0;
 
-#define NODE_ID              0U      // board0 0 / board1 1
+#define NODE_ID              1U      // board0 0 / board1 1
 #define CAN_ID_CMD_BASE      0x100U
 #define CAN_ID_STATUS_BASE   0x180U
 
@@ -122,12 +122,12 @@ uint16_t current_B[1];
 uint16_t current_C[1];
 
 // ADC calibrated value (different for each board and chip)
-#define current_A_calibrated 2045  // board0 2045 / board1 2047
-#define current_B_calibrated 2058  // board0 2058 / board1 2056
+#define current_A_calibrated 2047  // board0 2045 / board1 2047
+#define current_B_calibrated 2056  // board0 2058 / board1 2056
 #define current_C_calibrated 2031
 
 // motor
-uint16_t AS5048_zeropos = 10483;   // board0 10483 / board1 11178
+uint16_t AS5048_zeropos = 11178;   // board0 10483 / board1 11178
 #define polepair 7
 float ELEC_CNT = 16384.0f / (float)polepair;
 float P  = 6.0f;
@@ -178,7 +178,7 @@ float w_m_raw    = 0.0f;   // raw mechanical speed [rad/s]
 float th_m_prev    = 0.0f;
 uint8_t th_m_init  = 0U;
 
-uint16_t AS5048_mech_zeropos = 8000; // board0 8000 / board1 11940
+uint16_t AS5048_mech_zeropos = 11940; // board0 8000 / board1 11940
 float mech_limit = PI/2;
 
 volatile uint8_t can_cmd = 0;
@@ -573,13 +573,13 @@ void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
     uint8_t P_q = Rx_Data[4];
     uint8_t D_q = Rx_Data[5];
 
-    pos_P = ((float)P_q / 255.0f) * 20.0f;
-    pos_D = ((float)D_q / 255.0f) * 1.0f;
+    pos_P = ((float)P_q / 255.0f) * 100.0f;
+    pos_D = ((float)D_q / 255.0f) * 10.0f;
 
-    if(pos_P > 20.0f) pos_P = 20.0f;
+    if(pos_P > 100.0f) pos_P = 100.0f;
     if(pos_P < 0.0f)  pos_P = 0.0f;
 
-    if(pos_D > 1.0f) pos_D = 1.0f;
+    if(pos_D > 10.0f) pos_D = 10.0f;
     if(pos_D < 0.0f) pos_D = 0.0f;
 
     uint8_t cmd = Rx_Data[6];
