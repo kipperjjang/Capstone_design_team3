@@ -1,0 +1,369 @@
+Capstone Team 3 System Timing / Bottleneck Notes
+================================================
+
+Repository:
+- kipperjjang/Capstone_design_team3
+
+Scope:
+- Jetson ROS2 code: /src
+- STM32 communicator board: /STM32_codesave/capstone_communicator/Core
+- STM32 motor driver / aimming board: /STM32_codesave/capstone_aimming/Core
+
+
+1. Overall Periodic Structure
+-----------------------------
+
+High-level data flow:
+
+Camera
+  -> Jetson vision.py
+  -> ROS2 /vision
+  -> Jetson ctrl_node
+  -> ROS2 /control
+  -> Jetson bridge_node
+  -> UART 1 Mbps
+  -> F446 communicator
+  -> CAN command frames
+  -> G4 aimming motor driver boards
+  -> CAN status frames
+  -> F446 communicator
+  -> UART feedback
+  -> Jetson bridge_node
+  -> ROS2 /joint
+  -> Jetson ctrl_node
+
+
+2. Jetson Periodic Tasks
+------------------------
+
+2.1 vision.py camera reader
+
+File:
+- src/scripts/vision.py
+
+Relevant behavior:
+- LatestFrameReader._reader_loop() continuously reads from the Jetson CSI camera.
+- The GStreamer pipeline currently sets framerate=30 in code.
+- This reader thread only updates the latest available frame. It does not directly publish /vision.
+
+Period:
+- Camera pipeline setting: 30 fps in the current code.
+- If the real camera is configured elsewhere for 60 fps, the code should be checked because the current pipeline function defaults to 30.
+
+
+2.2 vision.py main inference loop
+
+File:
+- src/scripts/vision.py
+
+Relevant behavior:
+- VisionNode.run() repeatedly does:
+  1. read_img()
+  2. detect_bell()
+  3. if detected, publish() to /vision
+  4. publishImage()
+  5. executor.spin_once(timeout_sec=0.0)
+
+Period:
+- No fixed ROS timer.
+- Actual loop rate is limited by image processing and YOLO inference time.
+- Even if camera FPS is 60, /vision rate can be 10 Hz if one YOLO pass takes about 100 ms.
+
+Likely bottlenecks:
+- YOLO inference in detect_bell().
+- cv2.rotate() every frame.
+- publishing /vision/image through CvBridge if publish_image is true.
+- print(x1, y1, x2, y2) inside the detection loop, which can slow real-time execution on Jetson.
+
+
+2.3 ctrl_node periodic prediction/control
+
+File:
+- src/src/ros/ctrl_node.cpp
+- src/config/params.yaml
+
+Relevant behavior:
+- CtrlNode creates a wall timer from controller.frequency.
+- params.yaml sets controller.frequency = 1000.
+- timerCallback() runs estimator prediction, controller run, then publishes /control and /test/debug.
+
+Period:
+- Intended: 1000 Hz, 1 ms.
+- Actual rate depends on ROS executor scheduling and CPU load.
+
+Connection:
+- This produces prediction-only control even when /vision messages are slower.
+- However, measurement updates still depend on /vision frequency.
+
+
+2.4 ctrl_node vision callback
+
+File:
+- src/src/ros/ctrl_node.cpp
+
+Relevant behavior:
+- visionCallback() runs whenever /vision is received.
+- It updates the estimator with a measurement, runs the controller immediately, then publishes /control and /test/debug.
+
+Period:
+- Event-driven.
+- Same rate as /vision messages.
+
+Connection:
+- If /vision is only about 10 Hz, true vision measurement updates are also only about 10 Hz.
+
+
+2.5 bridge_node serial read watchdog
+
+File:
+- src/src/ros/bridge_node.cpp
+- src/src/bridge/serial.cpp
+- src/config/params.yaml
+
+Relevant behavior:
+- bridge.serial.watchdog_frequency = 1000.
+- bridge_node timerCallback() calls readSerialFrame().
+- readSerialFrame() reads bytes from the serial port and parses feedback frames.
+- Successfully parsed feedback becomes /joint.
+
+Period:
+- Intended: 1000 Hz, 1 ms.
+
+Important detail:
+- serial.cpp configures termios with VMIN=0 and VTIME=1.
+- VTIME=1 means read() may wait up to about 0.1 s when no data is available.
+- Therefore, the bridge timer may not actually run at 1 kHz if the serial read blocks.
+
+Likely symptom:
+- /joint may look closer to 10 Hz even though bridge watchdog_frequency is set to 1000.
+
+
+2.6 bridge_node control callback
+
+File:
+- src/src/ros/bridge_node.cpp
+
+Relevant behavior:
+- controlCallback() runs whenever /control is received.
+- It creates a UART control frame and writes it to the communicator board.
+
+Period:
+- Event-driven.
+- Depends on /control publish rate.
+
+
+3. Communicator Board Periodic Tasks
+------------------------------------
+
+Board:
+- Nucleo-F446RE communicator between Jetson and motor driver boards.
+
+File:
+- STM32_codesave/capstone_communicator/Core/Src/main.c
+
+
+3.1 UART RX interrupt
+
+Relevant behavior:
+- HAL_UART_RxCpltCallback() receives one byte at a time from USART2.
+- It calls UART_ParseByte().
+- When a complete valid PC frame is parsed, UART_ProcessPCFrame() runs.
+
+Period:
+- Event-driven by UART byte arrival from Jetson.
+
+Connection:
+- Jetson /control -> bridge_node UART write -> communicator UART RX interrupt.
+
+Current command behavior:
+- UART_ProcessPCFrame() reads target_yaw_add and target_pitch_add from the PC frame.
+- It then does:
+  target_yaw += target_yaw_add
+  target_pitch += target_pitch_add
+- This means Jetson control output is currently treated as an incremental angle command by the communicator.
+
+
+3.2 Communicator main CAN command loop
+
+Relevant behavior:
+- Main while(1) loop sends commands to the two motor boards:
+  CAN_SendCmd(NODE0_CMD_ID, target_yaw, yaw_P, yaw_D, pc_cmd, seq)
+  CAN_SendCmd(NODE1_CMD_ID, target_pitch, pitch_P, pitch_D, pc_cmd, seq)
+  HAL_Delay(5)
+
+Period:
+- About 200 Hz.
+
+Connection:
+- Sends latest accumulated yaw/pitch target over CAN.
+- NODE0 command ID: 0x100
+- NODE1 command ID: 0x101
+
+
+3.3 Communicator CAN RX callback
+
+Relevant behavior:
+- HAL_CAN_RxFifo0MsgPendingCallback() receives motor status frames.
+- It decodes position, velocity, and torque.
+- It stores yaw status for NODE0_STA_ID and pitch status for NODE1_STA_ID.
+- It is intended to call UART_SendFeedback() after both yaw and pitch are updated.
+
+Period:
+- Event-driven by CAN status frames from motor drivers.
+- Since motor boards send status when they receive command frames, nominal status opportunity is related to the 200 Hz communicator command loop.
+
+Known connection issue:
+- yaw_updated and pitch_updated are local variables inside the callback.
+- A single callback normally handles only one CAN frame.
+- Therefore if (yaw_updated && pitch_updated) is unlikely to become true.
+- This may prevent UART_SendFeedback() from being called.
+- This issue is planned to be changed later.
+
+
+4. Aimming Motor Driver Board Periodic Tasks
+--------------------------------------------
+
+Board:
+- G4 aimming motor driver board.
+
+File:
+- STM32_codesave/capstone_aimming/Core/Src/main.c
+
+
+4.1 TIM1 FOC / position control interrupt
+
+Relevant behavior:
+- HAL_TIM_PeriodElapsedCallback() runs for TIM1.
+- It does:
+  1. AS5048A_ReadAngle()
+  2. electrical angle calculation
+  3. MechAngleSpeed_Update()
+  4. PositionPD_Update()
+  5. current measurement transform
+  6. current PI control
+  7. SVPWM()
+
+Period:
+- Code defines POS_CTRL_HZ = 20000.0.
+- TIM1 configuration:
+  - Prescaler = 1 - 1
+  - CounterMode = center-aligned
+  - Period = 4199
+  - RepetitionCounter = 2 - 1
+- The code intent is a 20 kHz inner motor control loop.
+
+Connection:
+- This is the fast inner loop.
+- It uses the latest pos_ref_mech_rad received from CAN.
+- It is not expected to be the bottleneck for 10 Hz visual tracking symptoms.
+
+
+4.2 FDCAN RX callback
+
+Relevant behavior:
+- HAL_FDCAN_RxFifo0Callback() receives CAN command frames.
+- It accepts only its own CAN_ID_CMD.
+- It decodes:
+  - target position
+  - P gain
+  - D gain
+  - command flag
+  - sequence
+- If CMD_AIM is set, it updates pos_ref_mech_rad.
+- It immediately calls Motor_SendStatus(seq).
+
+Period:
+- Event-driven by communicator CAN command frames.
+- Expected command arrival is about 200 Hz from communicator.
+
+Connection:
+- Communicator command loop -> aimming CAN RX callback -> pos_ref_mech_rad update.
+- Motor_SendStatus() returns position/velocity/torque over CAN.
+
+
+5. Most Likely Bottlenecks
+--------------------------
+
+Primary bottleneck:
+- Jetson vision.py YOLO inference loop.
+
+Reason:
+- /vision is not driven by camera FPS directly.
+- /vision is published only after one full loop of read_img(), detect_bell(), and publish().
+- If YOLO inference takes around 100 ms, /vision becomes about 10 Hz.
+- This matches the observed feeling that tracking is roughly 10 Hz.
+
+Secondary bottleneck:
+- Jetson bridge_node serial read.
+
+Reason:
+- The bridge timer is configured for 1000 Hz, but serial read may block because VTIME=1.
+- If no serial feedback is available, read() can wait about 100 ms.
+- This can make /joint feedback look much slower than expected.
+
+Less likely bottleneck:
+- Aimming motor control loop.
+
+Reason:
+- The motor driver has a high-rate TIM1 interrupt loop intended around 20 kHz.
+- CAN command updates are about 200 Hz.
+- These are much faster than the observed 10 Hz visual update feel.
+
+
+6. Recommended Measurements
+---------------------------
+
+Run these on the Jetson while the system is operating:
+
+1. Check vision measurement rate:
+   ros2 topic hz /vision
+
+2. Check control output rate:
+   ros2 topic hz /control
+
+3. Check joint feedback rate:
+   ros2 topic hz /joint
+
+4. Check debug output rate:
+   ros2 topic hz /test/debug
+
+Interpretation:
+- If /vision is about 10 Hz, the main bottleneck is vision.py inference/image loop.
+- If /control is high but /joint is about 10 Hz, the feedback side is likely limited by serial read or communicator feedback.
+- If /control is about 10 Hz despite controller.frequency=1000, ROS executor or CPU load is interfering with ctrl_node.
+
+
+7. Quick Experiments
+--------------------
+
+Try these one at a time and re-measure topic Hz:
+
+1. Remove or throttle the per-frame print in vision.py:
+   print(x1, y1, x2, y2)
+
+2. Disable image publishing:
+   publish_image = false
+
+3. Reduce YOLO image size or use a faster engine/model.
+
+4. Confirm the actual camera pipeline framerate in vision.py.
+   The current code uses framerate=30.
+
+5. Check whether bridge serial read is blocking:
+   inspect /joint rate and consider reducing VTIME or making the serial read fully non-blocking.
+
+
+8. Practical Summary
+--------------------
+
+The system has fast enough downstream loops:
+- Communicator CAN command loop: about 200 Hz.
+- Aimming motor board CAN command handling: event-driven, about 200 Hz command input.
+- Aimming internal motor control: intended about 20 kHz.
+
+The part most consistent with the observed 10 Hz tracking feel is:
+- Jetson vision.py YOLO loop, not the camera sensor itself.
+
+The part most likely to make angle feedback appear slow is:
+- bridge_node serial read behavior and communicator feedback path.
+
