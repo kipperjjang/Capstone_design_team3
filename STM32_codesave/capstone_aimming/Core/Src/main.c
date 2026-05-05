@@ -42,14 +42,29 @@
 /* USER CODE BEGIN PD */
 
 #define invsqrt3 (0.57735027f)
-#define SECTOR_RAD  (1.04719755f)   // π/3
-#define V_LIMIT (V_BUS * invsqrt3)         // real maximum limit
+#define SECTOR_RAD  (1.04719755f)      // π/3
+#define V_LIMIT (V_BUS * invsqrt3)     // real maximum limit
 #define CPU_HZ (168000000.0f)
 
-#define ARR_TICKS   4199 //4199          // TIM1 max ARR
+#define ARR_TICKS   4199               // TIM1 max ARR
 #define V_BUS (24.0f)                  // input bus voltage
-#define Vd_limit (V_LIMIT * 0.9f)           // Vd limit voltage. 0.98 is safety factor -> 0.9, leave some voltage to injection
+#define Vd_limit (V_LIMIT * 0.9f)      // Vd limit voltage. 0.98 is safety factor
 
+#define CMD_AIM         (1 << 0)
+#define CMD_SHOOT       (1 << 1)
+#define CMD_STOP        (1 << 2)
+
+#define CAN_CMD_POS_SCALE       1000000.0f   // int32 = rad * 1e6
+#define CAN_CMD_VEL_SCALE       1000.0f      // int16 = rad/s * 1e3
+
+#define CAN_FB_POS_SCALE        10000.0f     // int16 = rad * 1e4
+#define CAN_FB_VEL_SCALE        1000.0f      // int16 = rad/s * 1e3
+#define CAN_FB_TORQUE_SCALE     1000.0f      // int16 = torque * 1e3
+
+#define MOTOR_ERR_NONE          0x00
+#define MOTOR_ERR_CMD_TIMEOUT   (1 << 0)
+#define MOTOR_ERR_LIMIT         (1 << 1)
+#define MOTOR_ERR_DRV           (1 << 2)
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -87,13 +102,12 @@ uint8_t CAN_setting_status = 0;
 uint8_t CAN_receive_status = 0;
 uint8_t CAN_transmit_status = 0;
 
-#define NODE_ID              0U
+#define NODE_ID              0U      // board0 0 / board1 1
 #define CAN_ID_CMD_BASE      0x100U
 #define CAN_ID_STATUS_BASE   0x180U
 
-#define CAN_ID_CMD           (CAN_ID_CMD_BASE + NODE_ID)
-#define CAN_ID_STATUS        (CAN_ID_STATUS_BASE + NODE_ID)
-
+#define CAN_ID_CMD           (CAN_ID_CMD_BASE + NODE_ID)    // command receive id
+#define CAN_ID_STATUS        (CAN_ID_STATUS_BASE + NODE_ID) // status send id
 
 
 // PWM start status. CH1_start / CH2_start / CH3_start / TIM1_ISR_start / ADC1_start / ADC2_start / ADC3_start / ALL_OK
@@ -108,17 +122,17 @@ uint16_t current_B[1];
 uint16_t current_C[1];
 
 // ADC calibrated value (different for each board and chip)
-#define current_A_calibrated 2045  // board 0 2045
-#define current_B_calibrated 2058  // board 0 2058
+#define current_A_calibrated 2045  // board0 2045 / board1 2047
+#define current_B_calibrated 2058  // board0 2058 / board1 2056
 #define current_C_calibrated 2031
 
 // motor
-uint16_t AS5048_zeropos = 12913;
+uint16_t AS5048_zeropos = 10483;   // board0 10483 / board1 11178
 #define polepair 7
 float ELEC_CNT = 16384.0f / (float)polepair;
-#define P  (0.0f)
-#define I  (0.0f)
-#define Ka (0.0f)
+float P  = 6.0f;
+float I  = 0.4f;
+float Ka = 0.5f;
 
 float iq_ref = 0.0f, id_ref = 0.0f;               // reference current
 
@@ -131,16 +145,55 @@ float Vq, Vd, V_alpha, V_beta;                                   // park
 uint8_t encoder_cali = 0;
 float V_mag = 1.0f, V_arg = 0.0f, V_cali_speed;
 
-volatile float pos_ref_mech_rad    = 0.0f;   // 입력: 기계각[rad] (외부에서 갱신)
+volatile float pos_ref_mech_rad    = 0.0f;
 
-float pos_P = 1.7f;
-float pos_D = 0.06f;
+float pos_P = 5.0f;
+float pos_D = 0.2f;
 
 float P_part, D_part;
-float theta_e_est_rad_PLL = 0.0f;
 
 float all_us;
 float cali_sin, cali_cos;
+
+float current_log_1[10000];
+float current_log_2[10000];
+
+uint8_t current_log = 0;
+uint8_t current_dump = 0;
+uint32_t i, j, flip;
+
+#define AS5048_CPR        (16384.0f)
+#define AS5048_TO_RAD     (2.0f * PI / AS5048_CPR)
+
+#define POS_CTRL_HZ       (20000.0f)
+#define POS_CTRL_DT       (1.0f / POS_CTRL_HZ)
+
+#define W_M_LPF_ALPHA     (0.005f)
+
+float th_m       = 0.0f;   // mechanical angle, wrapped [-pi, pi)
+float th_m_cont  = 0.0f;   // continuous mechanical angle [rad]
+float w_m        = 0.0f;   // filtered mechanical speed [rad/s]
+float w_m_raw    = 0.0f;   // raw mechanical speed [rad/s]
+
+float th_m_prev    = 0.0f;
+uint8_t th_m_init  = 0U;
+
+uint16_t AS5048_mech_zeropos = 8000; // board0 8000 / board1 11940
+float mech_limit = PI/2;
+
+volatile uint8_t can_cmd = 0;
+volatile uint8_t can_cmd_seq = 0;
+volatile uint8_t can_last_cmd_seq = 0;
+volatile uint8_t can_cmd_seq_valid = 0;
+volatile uint32_t can_rx_count = 0;
+volatile uint32_t can_tx_count = 0;
+volatile uint32_t can_tx_fail_count = 0;
+volatile uint32_t last_can_cmd_tick = 0;
+volatile float can_target_pos = 0.0f;
+volatile float can_target_vel = 0.0f;
+volatile uint8_t motor_error_code = MOTOR_ERR_NONE;
+
+uint8_t not_aim = 1;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -175,25 +228,81 @@ static inline float sat(float x);
 
 void SVPWM(float, float);
 
+static inline float AS5048_CountToMechRad(uint16_t cnt);
+static inline void MechAngleSpeed_Update(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
-#define IQ_REF_LIMIT    (1.0f)
-//static inline void PositionPD_Update_FromHFI(void){
-//    float e = pos_ref_mech_rad - th_m;
-//
-//    P_part = pos_P * e;
-//    D_part = -pos_D * w_m;
-//
-//    float iq_cmd = flip_sign * (P_part + D_part);
-//
-//    iq_cmd = (iq_cmd > IQ_REF_LIMIT) ? IQ_REF_LIMIT :
-//             (iq_cmd < -IQ_REF_LIMIT) ? -IQ_REF_LIMIT : iq_cmd;
-//
-//    iq_ref = iq_cmd;
-//}
+static inline float AS5048_CountToMechRad(uint16_t cnt){
+    int32_t dcnt = (int32_t)cnt - (int32_t)AS5048_mech_zeropos;
+
+    if (dcnt < 0) {
+        dcnt += 16384;
+    }
+
+    // 0 ~ 2pi
+    float th = (float)dcnt * AS5048_TO_RAD;
+
+    // -pi ~ pi
+    if (th >= PI) {
+        th -= 2.0f * PI;
+    }
+
+    return th;
+}
+
+static inline void MechAngleSpeed_Update(void){
+    float th_now = AS5048_CountToMechRad((uint16_t)mech_angle);
+
+    if (!th_m_init) {
+        th_m       = th_now;
+        th_m_prev  = th_now;
+        th_m_cont  = th_now;
+        w_m_raw    = 0.0f;
+        w_m        = 0.0f;
+        th_m_init  = 1U;
+        return;
+    }
+
+    // encoder wrap 보정된 delta angle
+    float dth = wrap_pm_pi(th_now - th_m_prev);
+
+    th_m_prev = th_now;
+    th_m      = th_now;
+
+    // multi-turn continuous angle
+    th_m_cont += dth;
+
+    // mechanical angular velocity [rad/s]
+    w_m_raw = dth * POS_CTRL_HZ;
+
+    // 간단한 1차 LPF
+    w_m += W_M_LPF_ALPHA * (w_m_raw - w_m);
+}
+
+#define IQ_REF_LIMIT    (0.8f)
+static inline void PositionPD_Update(void){
+	pos_ref_mech_rad = (pos_ref_mech_rad > mech_limit) ? mech_limit : (pos_ref_mech_rad < -mech_limit) ? -mech_limit : pos_ref_mech_rad;
+
+    float e = pos_ref_mech_rad - th_m_cont;
+
+    P_part = pos_P * e;
+    D_part = - pos_D * w_m;
+
+    float iq_cmd = (P_part + D_part);
+
+    iq_cmd = (iq_cmd > IQ_REF_LIMIT) ? IQ_REF_LIMIT :
+             (iq_cmd < -IQ_REF_LIMIT) ? -IQ_REF_LIMIT : iq_cmd;
+
+    iq_ref = iq_cmd;
+
+    if(not_aim){
+    	iq_ref = 0.0f;
+    	id_ref = 0.0f;
+    }
+}
 
 uint32_t debug_time_start, SVPWM_end;
 
@@ -202,6 +311,7 @@ uint32_t debug_time_start, SVPWM_end;
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim){  //TIM interrupt rank has to be added in main()
 	if(htim->Instance == TIM1){
 		debug_time_start = dwt_now();
+
 		AS5048A_ReadAngle();
 
 		float delta = (float) (mech_angle - AS5048_zeropos);
@@ -210,9 +320,13 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim){  //TIM interrupt ra
 			delta = delta - ELEC_CNT;
 		}
 		electrical_angle = delta * 360.0f / ELEC_CNT;
+
 		if (electrical_angle > 180.0f) electrical_angle -= 360.0f;
 
 		arm_sin_cos_f32(electrical_angle,&_sin,&_cos);
+
+		MechAngleSpeed_Update();
+		PositionPD_Update();
 
 		// alpha beta current calculation
 		ic = current_A[0] - current_A_calibrated;  // A<->C mapping hardware issue
@@ -224,9 +338,14 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim){  //TIM interrupt ra
 		i_alpha = ia * current_const;                   // i_alpha = 2/3 * (ia - (ib + ic)/2) = ia
 		i_beta  = (ib - ic) * invsqrt3 * current_const; // i_beta  = 2/3 * (ib - ic) * sqrt(3)/2 = (ib - ic) * 1/sqrt(3)
 
+
 		if(encoder_cali){
 			V_arg = V_arg + V_cali_speed;
 
+			if(V_arg > 180.0f)
+				V_arg -= 360.0f;
+			else if(V_arg < -180.0f)
+				V_arg += 360.0f;
 
 			arm_sin_cos_f32(V_arg,&cali_sin,&cali_cos);
 
@@ -235,8 +354,8 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim){  //TIM interrupt ra
 		}
 
 		// inv park, using high frequency rejected
-		id =  i_alpha_LPF * _cos + i_beta_LPF * _sin;
-		iq = -i_alpha_LPF * _sin + i_beta_LPF * _cos;
+		id =  i_alpha * _cos + i_beta * _sin;
+		iq = -i_alpha * _sin + i_beta * _cos;
 
 		//PI
 		iq_err = iq_ref - iq;
@@ -262,11 +381,23 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim){  //TIM interrupt ra
 		V_beta  = Vd * _sin + Vq * _cos;
 
 		SVPWM(V_alpha, V_beta);
-		//SVPWM(1.0f, 0.0f);
 
 		SVPWM_end = dwt_now();
 
+		/*if(current_log){
+			if(i++ < 10000){
+				current_log_1[i] = iq_ref;
+				current_log_2[i] = iq;
+			}
+		}
+
+		if(flip++ == 49999){
+			iq_ref = -iq_ref;
+			flip = 0;
+		}*/
+
 		all_us               = cycles_to_us(SVPWM_end - debug_time_start);
+
 	}
 	return;
 }
@@ -354,22 +485,160 @@ void SVPWM(float Valpha, float Vbeta){
     set_ccr(ARR_TICKS - Ua, ARR_TICKS - Ub, ARR_TICKS - Uc);
 }
 
+static inline int16_t clamp_i16_from_float(float x)
+{
+    if (x > 32767.0f) return 32767;
+    if (x < -32768.0f) return -32768;
+    return (int16_t)x;
+}
+
+static inline int32_t get_i32_le(uint8_t *d)
+{
+    return (int32_t)((uint32_t)d[0]
+                  | ((uint32_t)d[1] << 8)
+                  | ((uint32_t)d[2] << 16)
+                  | ((uint32_t)d[3] << 24));
+}
+
+static inline int16_t get_i16_le(uint8_t *d)
+{
+    return (int16_t)((uint16_t)d[0] | ((uint16_t)d[1] << 8));
+}
+
+static inline void put_i16_le(uint8_t *d, int16_t v)
+{
+    d[0] = (uint8_t)(v & 0xFF);
+    d[1] = (uint8_t)((v >> 8) & 0xFF);
+}
+
+static void Motor_SendStatus(uint8_t seq)
+{
+    int16_t pos_q;
+    int16_t vel_q;
+    int16_t torque_q;
+
+    pos_q = clamp_i16_from_float(th_m_cont * CAN_FB_POS_SCALE);
+    vel_q = clamp_i16_from_float(w_m * CAN_FB_VEL_SCALE);
+
+    // 여기서는 iq_ref를 torque 대신 임시로 보냄.
+    // 실제 토크[Nm]를 보내려면 torque = Kt * iq 형태로 바꾸면 됨.
+    torque_q = clamp_i16_from_float(iq * CAN_FB_TORQUE_SCALE);
+
+    put_i16_le(&Tx_Data[0], pos_q);
+    put_i16_le(&Tx_Data[2], vel_q);
+    put_i16_le(&Tx_Data[4], torque_q);
+
+    Tx_Data[6] = motor_error_code;
+    Tx_Data[7] = seq;
+
+    CAN_transmit_status =
+        (HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan2, &Tx_Header, Tx_Data) == HAL_OK);
+
+    if (CAN_transmit_status)
+        can_tx_count++;
+    else
+        can_tx_fail_count++;
+}
+
 /* CAN Rx ISR start */
-void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs){
-	if(hfdcan->Instance == FDCAN2){
-		CAN_receive_status = (HAL_FDCAN_GetRxMessage(hfdcan, FDCAN_RX_FIFO0, &Rx_Header, Rx_Data) == HAL_OK);
-		if(CAN_receive_status == 1){
-			CAN_receive_status = 0;
-			HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_3);  // green LED
+void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
+{
+    if (hfdcan->Instance != FDCAN2)
+        return;
 
-			for(int i = 0; i < 8; i++){
-				Tx_Data[i] = Rx_Data[i];
-			}
+    if ((RxFifo0ITs & FDCAN_IT_RX_FIFO0_NEW_MESSAGE) == 0)
+        return;
 
-			CAN_transmit_status = (HAL_FDCAN_AddMessageToTxFifoQ(hfdcan, &Tx_Header, Tx_Data) == HAL_OK);
-		}
+    CAN_receive_status =
+        (HAL_FDCAN_GetRxMessage(hfdcan, FDCAN_RX_FIFO0, &Rx_Header, Rx_Data) == HAL_OK);
 
-	}
+    if (!CAN_receive_status)
+        return;
+
+    CAN_receive_status = 0;
+    can_rx_count++;
+
+    HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_3);  // green LED
+
+    // 내 command ID가 아니면 무시
+    if (Rx_Header.Identifier != CAN_ID_CMD)
+        return;
+
+    // Classic CAN 8 byte만 허용
+    if (Rx_Header.DataLength != FDCAN_DLC_BYTES_8)
+        return;
+
+    int32_t pos_q = get_i32_le(&Rx_Data[0]);
+
+    uint8_t P_q = Rx_Data[4];
+    uint8_t D_q = Rx_Data[5];
+
+    pos_P = ((float)P_q / 255.0f) * 20.0f;
+    pos_D = ((float)D_q / 255.0f) * 1.0f;
+
+    if(pos_P > 20.0f) pos_P = 20.0f;
+    if(pos_P < 0.0f)  pos_P = 0.0f;
+
+    if(pos_D > 1.0f) pos_D = 1.0f;
+    if(pos_D < 0.0f) pos_D = 0.0f;
+
+    uint8_t cmd = Rx_Data[6];
+    uint8_t seq = Rx_Data[7];
+
+    can_target_pos = ((float)pos_q) / CAN_CMD_POS_SCALE;
+
+    can_cmd = cmd;
+    can_cmd_seq = seq;
+    last_can_cmd_tick = HAL_GetTick();
+
+    if (can_cmd_seq_valid)
+    {
+        uint8_t expected = can_last_cmd_seq + 1;
+
+        // 일단 에러로 막지는 않고 디버깅용으로만 사용
+        if (seq != expected)
+        {
+            // 필요하면 별도 seq error bit 추가 가능
+        }
+    }
+    else
+    {
+        can_cmd_seq_valid = 1;
+    }
+
+    can_last_cmd_seq = seq;
+
+    if (cmd & CMD_AIM)
+    {
+        float ref = can_target_pos;
+
+        if (ref > mech_limit)
+        {
+            ref = mech_limit;
+            motor_error_code |= MOTOR_ERR_LIMIT;
+        }
+        else if (ref < -mech_limit)
+        {
+            ref = -mech_limit;
+            motor_error_code |= MOTOR_ERR_LIMIT;
+        }
+        else
+        {
+            motor_error_code &= ~MOTOR_ERR_LIMIT;
+        }
+
+        pos_ref_mech_rad = ref;
+        not_aim = 0;
+    }
+    else
+    	not_aim = 1;
+
+    if (DRV8353_status != 0xFF)
+        motor_error_code |= MOTOR_ERR_DRV;
+    else
+        motor_error_code &= ~MOTOR_ERR_DRV;
+
+    Motor_SendStatus(seq);
 }
 /* CAN Rx ISR end */
 
@@ -467,19 +736,6 @@ int main(void)
   HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_3);  // green LED
   HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_15); // red LED
 
-  HAL_Delay(500);
-  HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_15); // red LED
-  HAL_Delay(500);
-  HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_3);  // green LED
-  HAL_Delay(500);
-  HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_6);  // blue LED
-
-  HAL_Delay(500);
-  HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_6);  // blue LED
-  HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_3);  // green LED
-  HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_15); // red LED
-
-
 
   HAL_GPIO_WritePin(GPIOC, GPIO_PIN_4, 1);  // AS5048 nCS HIGH
   HAL_GPIO_WritePin(GPIOC, GPIO_PIN_14, 1); // DRV8353 enable
@@ -547,7 +803,6 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-
   }
   /* USER CODE END 3 */
 }
