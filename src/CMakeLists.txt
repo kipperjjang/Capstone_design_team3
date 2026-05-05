@@ -127,6 +127,7 @@ install(DIRECTORY include/
 install(PROGRAMS
   scripts/vision.py
   scripts/vision_test.py
+  scripts/track_test.py
   scripts/test_visualizer.py
   scripts/test_kalman_evo.py
   scripts/prediction/sample_training_data.py

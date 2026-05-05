@@ -1,12 +1,21 @@
 #include "ros/ctrl_node.hpp"
 
 #include "data/config/control_config.hpp"
+#include "utils/eigen_utils.hpp"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <functional>
 
 using std::placeholders::_1;
+
+namespace {
+void fillVector2(std::array<double, 2> &output, const Eigen::Vector2d &input) {
+  output[0] = input.x();
+  output[1] = input.y();
+}
+}  // namespace
 
 CtrlNode::CtrlNode() : Node("control_node") {
   // Read Configuration
@@ -28,6 +37,7 @@ CtrlNode::CtrlNode() : Node("control_node") {
   vision_sub_ = this->create_subscription<custom_msgs::msg::VisionMsg>(
     vision_topic, 1, std::bind(&CtrlNode::visionCallback, this, _1));
   ctrl_pub_ = this->create_publisher<custom_msgs::msg::ControlMsg>("/control", 10);
+  debug_pub_ = this->create_publisher<custom_msgs::msg::TestDebug>("/test/debug", 1);
 
   const int period = static_cast<int>(1000.0 / controller_config.hz);
   timer_ = this->create_wall_timer(std::chrono::milliseconds(period), std::bind(&CtrlNode::timerCallback, this));
@@ -44,8 +54,8 @@ void CtrlNode::jointCallback(const custom_msgs::msg::JointMsg::SharedPtr msg) {
 
   joint_ = toEigen(msg->joint);
   joint_vel_ = toEigen(msg->joint_vel);
-  if (estimator_.isInitialized()) {
-    estimator_.update(joint_, joint_vel_, dt); 
+  if (estimator_->isInitialized()) {
+    estimator_->update(joint_, joint_vel_, dt); 
   }
 }
 
@@ -56,6 +66,8 @@ void CtrlNode::visionCallback(const custom_msgs::msg::VisionMsg::SharedPtr msg) 
   if (!has_measurement) return;
 
   RobotState vision_state(msg);
+  last_raw_state_ = vision_state;
+  has_raw_state_ = true;
 
   if (!estimator_->isInitialized()) {
     estimator_->init(vision_state);
@@ -67,6 +79,7 @@ void CtrlNode::visionCallback(const custom_msgs::msg::VisionMsg::SharedPtr msg) 
   const RobotState state = estimator_->getState(false);
   controller_->run(state);
   publishControl(controller_->getControl());
+  publishDebug(state, controller_->getControl(), true, false);
 }
 
 void CtrlNode::timerCallback() {
@@ -83,6 +96,7 @@ void CtrlNode::timerCallback() {
 
   // Publish control input to the plant
   publishControl(controller_->getControl());
+  publishDebug(state, controller_->getControl(), false, true);
 }
 
 void CtrlNode::publishControl(const ControlState &x) {
@@ -93,4 +107,36 @@ void CtrlNode::publishControl(const ControlState &x) {
   msg.fire = x.fire;
   msg.reload = x.reload;
   ctrl_pub_->publish(msg);
+}
+
+void CtrlNode::publishDebug(const RobotState &estimated_state, const ControlState &control_state,
+                            bool has_raw, bool predicted_only) {
+  custom_msgs::msg::TestDebug msg;
+  msg.header.stamp = this->now();
+  msg.sample_time = (has_raw && has_raw_state_) ? last_raw_state_.t : estimated_state.t;
+  msg.dt = estimated_state.dt;
+
+  if (has_raw_state_) {
+    fillVector2(msg.raw_p, last_raw_state_.p);
+    fillVector2(msg.raw_v, last_raw_state_.v);
+    fillVector2(msg.raw_a, last_raw_state_.a);
+    msg.detected = last_raw_state_.detected;
+    msg.tracked = last_raw_state_.tracked;
+  }
+
+  fillVector2(msg.estimated_p, estimated_state.p);
+  fillVector2(msg.estimated_v, estimated_state.v);
+  fillVector2(msg.estimated_a, estimated_state.a);
+
+  msg.has_raw = has_raw && has_raw_state_;
+  msg.estimator_initialized = estimator_->isInitialized();
+  msg.predicted_only = predicted_only;
+
+  msg.has_control = true;
+  msg.u_yaw = control_state.u_yaw;
+  msg.u_pitch = control_state.u_pitch;
+  msg.fire = control_state.fire;
+  msg.reload = control_state.reload;
+
+  debug_pub_->publish(msg);
 }
