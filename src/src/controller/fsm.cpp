@@ -14,11 +14,11 @@ void FSM::update(const RobotState &state) {
       break;
 
     case FSMState::TRACK:
-      if (!has_target || dt > config_.max_time_gap) {
-        fsm_state_ = FSMState::SEARCH;
-      } else if (err_p < config_.err_p_track && err_v < config_.err_v_track) {
-        fsm_state_ = FSMState::AIM;
-      }
+      // if (!has_target || dt > config_.max_time_gap) {
+      //   fsm_state_ = FSMState::SEARCH;
+      // } else if (err_p < config_.err_p_track && err_v < config_.err_v_track) {
+      //   fsm_state_ = FSMState::AIM;
+      // }
       break;
 
     case FSMState::AIM:

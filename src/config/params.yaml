@@ -5,8 +5,8 @@ vision:
 
 # Controller parameters 
 controller:
-  Kp:                     [200.0,200.0]
-  Kd:                     [5.0,5.0]
+  Kp:                     [0.007, -0.01]
+  Kd:                     [-0.000, -0.00]
   
   frequency:              1000        # Frequency of the control node
   time_delay:             0.1         # Expected time delay during fire (s)
@@ -21,7 +21,7 @@ estimator:
   camera:
     focal_length:         0.01
   kalman:
-    q_acc:                1e+6
+    q_acc:                1e+5
     r_detected:           10.0
     r_tracked:            10.0
     r_temp_vel:           900
@@ -35,7 +35,7 @@ bridge:
   serial:
     name:                 "usb"
     port:                 "/dev/ttyACM0"  # Read/write bridge frames
-    baud:                 115200
+    baud:                 1000000
     data_bits:            8
     stop_bits:            1
     parity:               0

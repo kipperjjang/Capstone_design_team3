@@ -16,7 +16,7 @@ def generate_launch_description():
   # HW-ROS bridge node
   bridge_node = Node(
     package = 'capstone',
-    executable = 'bridge',
+    executable = 'bridge_node',
     name = 'bridge_node',
     output = 'screen',
     # prefix = 'xterm -e gdb -ex run --args',
@@ -27,8 +27,8 @@ def generate_launch_description():
 
   # Main control node
   ctrl_node = Node(
-    package = 'capastone',
-    executable = 'ctrl',
+    package = 'capstone',
+    executable = 'ctrl_node',
     name = 'ctrl_node',
     output = 'screen',
     # prefix = 'xterm -e gdb -ex run --args',
@@ -48,4 +48,16 @@ def generate_launch_description():
     ],
   )
 
+  # Test Node
+  # test_node = Node(
+  #   package = 'capstone',
+  #   executable = 'track_test.py',
+  #   name = 'test_node',
+  #   output = 'screen',
+  #   parameters = [
+  #     {'config_path':      config_path},
+  #   ],
+  # )
+
   return LaunchDescription([bridge_node, ctrl_node, vision_node])
+  # return LaunchDescription([bridge_node, ctrl_node, vision_node, test_node])

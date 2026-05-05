@@ -1,7 +1,38 @@
 #include "controller/controller.hpp"
 
+namespace {
+Eigen::Vector2d computeBellAngle(const RobotState &state) {
+  const double p = state.p(0);
+  const double q = state.p(1);
+  const double c1 = std::cos(state.joint(0));
+  const double s1 = std::sin(state.joint(0));
+  const double c2 = std::cos(state.joint(1));
+  const double s2 = std::sin(state.joint(1));
+  const double f = 0.016 * 326.0;
+  
+  // Compute yaw and pitch angle of the bell with respect to the base frame
+  const double alpha = std::atan2(-p*c1 + q*s1*s2 + f*s1*c2, p*s1+q*c1*s2+f*c1*c2);
+  const double beta = std::atan2(-q*c2 + f*c2, std::sqrt(p*p + std::pow(q*s2 + f*c2, 2)));
+
+  // Compute angular velocity of the bell
+  // const double R = std::sqrt(p*p + std::pow(q*s2+f*c2, 2));
+  // const double L = std::sqrt(p*p + q*q + f*f);
+  // Eigen::Matrix2d Jp, Jj;
+  // Jp <<     -(q*s2 + f*c2)/(R*R),             p*s2/(R*R),
+  //             -p*(f*s2 - q*c2)/(L*L*R), -(q*s2 + f*c2)/(L*L*R);
+  // Jj << 1.0, p*(q*c2 - f*s2),
+  //             0, (q*s2 + f*c2)/R;
+  // Eigen::Vector2d omega = Jp * state.v + Jj * state.joint_vel;
+
+  Eigen::Vector2d out;
+  out << alpha, beta;
+  return out;
+}
+} // namespace
+
 void Controller::run(const RobotState &state) {
   state_ = state;
+  const Eigen::Vector2d img_center(320.0, 240.0);
 
   // Update FSM State
   fsm_.update(state_);
@@ -16,7 +47,9 @@ void Controller::run(const RobotState &state) {
 
     case FSMState::TRACK: {
       // Compute desired angle
-      Eigen::Vector2d u = -config_.Kp * state.p - config_.Kd * state.v;
+      Eigen::Vector2d u = -config_.Kp * (state.p - img_center) - config_.Kd * state.v;
+      // Eigen::Vector2d u = computeBellAngle(state);
+      u = (M_PI / 180.0) * u;
 
       u_.update(u, false, false);
       break;

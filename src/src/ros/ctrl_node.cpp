@@ -34,9 +34,9 @@ CtrlNode::CtrlNode() : Node("control_node") {
   controller_ = std::make_unique<Controller>(controller_config);
   
   // Subscriber and Publisher
-  vision_sub_ = this->create_subscription<custom_msgs::msg::VisionMsg>(
-    vision_topic, 1, std::bind(&CtrlNode::visionCallback, this, _1));
-  ctrl_pub_ = this->create_publisher<custom_msgs::msg::ControlMsg>("/control", 10);
+  vision_sub_ = this->create_subscription<custom_msgs::msg::VisionMsg>(vision_topic, 1, std::bind(&CtrlNode::visionCallback, this, _1));
+  joint_sub_ = this->create_subscription<custom_msgs::msg::JointMsg>("/joint", 1, std::bind(&CtrlNode::jointCallback, this, _1));
+  ctrl_pub_ = this->create_publisher<custom_msgs::msg::ControlMsg>("/control", 1);
   debug_pub_ = this->create_publisher<custom_msgs::msg::TestDebug>("/test/debug", 1);
 
   const int period = static_cast<int>(1000.0 / controller_config.hz);
@@ -83,7 +83,7 @@ void CtrlNode::visionCallback(const custom_msgs::msg::VisionMsg::SharedPtr msg) 
 }
 
 void CtrlNode::timerCallback() {
-  // Update with the process model
+  // // Update with the process model
   if (!estimator_->isInitialized()) return;
   
   // Update Estimator state (predicted state)

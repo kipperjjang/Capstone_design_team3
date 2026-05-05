@@ -41,7 +41,7 @@ def generate_launch_description():
   python_node = Node(
     package = 'capstone',
     executable = 'vision_test.py',
-    # executable = 'tracking_test.py',
+    # executable = 'track_test.py',
     name = 'python_node',
     output = 'screen',
   )

@@ -92,7 +92,7 @@ class TrackTest(Node):
       cv2.FONT_HERSHEY_SIMPLEX,
       0.7,
       (90, 90, 90),
-      2,
+      1,
       cv2.LINE_AA)
     return canvas
 
@@ -135,7 +135,7 @@ class TrackTest(Node):
 
     start = self.pointToPixel(point)
     end = self.pointToPixel(point + delta)
-    cv2.arrowedLine(image, start, end, color, 2, cv2.LINE_AA, tipLength=0.25)
+    cv2.arrowedLine(image, start, end, color, 2, cv2.LINE_AA, tipLength=0.5)
     cv2.putText(
       image,
       label,
@@ -189,7 +189,7 @@ class TrackTest(Node):
     rows = [
       ('image', self.latest_image_time, (255, 255, 255)),
       ('vision', self.latest_vision_time, (0, 220, 0)),
-      ('ctrl debug', self.latest_debug_time, (255, 120, 120)),
+      ('ctrl debug', self.latest_debug_time, (220, 0, 0)),
     ]
     now = self.nowSeconds()
     y = 26
@@ -200,7 +200,8 @@ class TrackTest(Node):
         text_color = (0, 0, 255)
       else:
         age = now - timestamp
-        text = f'{label}: {age:.2f}s'
+        hz = 1.0 / age if age > 1e-6 else 0.0
+        text = f'{label}: {hz:.1f}Hz'
         text_color = color if age <= self.stale_timeout_sec else (0, 0, 255)
 
       cv2.putText(
@@ -210,7 +211,7 @@ class TrackTest(Node):
         cv2.FONT_HERSHEY_SIMPLEX,
         0.55,
         text_color,
-        2,
+        1,
         cv2.LINE_AA)
       y += 24
 
@@ -225,18 +226,18 @@ class TrackTest(Node):
         (16, y),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.55,
-        (255, 255, 255),
-        2,
+        (0, 0, 0),
+        1,
         cv2.LINE_AA)
 
   def drawLegend(self, image):
     h = image.shape[0]
     cv2.putText(image, 'q / Esc: quit', (16, h - 18),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2, cv2.LINE_AA)
+                cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1, cv2.LINE_AA)
     cv2.putText(image, 'YOLO bbox/center', (170, h - 18),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 220, 0), 2, cv2.LINE_AA)
+                cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 220, 0), 1, cv2.LINE_AA)
     cv2.putText(image, 'ctrl estimate/velocity', (360, h - 18),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 120, 120), 2, cv2.LINE_AA)
+                cv2.FONT_HERSHEY_SIMPLEX, 0.55, (220, 0, 0), 1, cv2.LINE_AA)
 
   def draw(self):
     image = self.makeCanvas()

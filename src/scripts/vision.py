@@ -149,6 +149,12 @@ class VisionNode(Node):
     if frame is None:
       time.sleep(0.001)
 
+    # anti clock 90
+    frame = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
+
+    # updown flip
+    # frame = cv2.rotate(frame, cv2.ROTATE_180)
+
     self.img = frame
     return True
 
@@ -157,9 +163,6 @@ class VisionNode(Node):
     self.position = np.zeros(2, dtype=np.float32)
     if self.img is None:
       return
-
-    # Mirror mode
-    # frame = cv2.flip(frame, 1)
 
     height, width = self.img.shape[:2]
     screen_center_x = width // 2
@@ -250,9 +253,10 @@ class VisionNode(Node):
     msg.source_mode = "YOLO"
     self.state_pub.publish(msg)
 
+  def publishImage(self):
     if self.image_pub is not None and self.img is not None:
       image_msg = self.bridge.cv2_to_imgmsg(self.img, encoding="bgr8")
-      image_msg.header.stamp = stamp
+      image_msg.header.stamp = self.get_clock().now().to_msg()
       self.image_pub.publish(image_msg)
 
   def run(self):
@@ -265,6 +269,7 @@ class VisionNode(Node):
         self.detect_bell()
         if self.is_detected:
           self.publish()
+        self.publishImage()
         executor.spin_once(timeout_sec=0.0)
     finally:
       executor.shutdown()
