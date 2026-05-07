@@ -20,5 +20,7 @@ struct EstimatorConfig {
   double p0_acc;            // Initial acceleration covariance
   double max_time_gap;      // Max valid gap without measurement
 
+  double prediction_time;   // Prediction time to compensate lag
+
   static EstimatorConfig load(const std::string &path);
 };

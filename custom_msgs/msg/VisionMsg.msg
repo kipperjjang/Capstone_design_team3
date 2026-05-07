@@ -12,6 +12,9 @@ float32[] a
 # bbox width and height
 float32[] bbox
 
+# image center
+float32[] img_center
+
 # Precision, validity
 float32 confidence
 float32[] covariance

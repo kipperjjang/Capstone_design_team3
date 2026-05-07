@@ -31,7 +31,7 @@ def generate_launch_description():
     executable = 'ctrl_node',
     name = 'ctrl_node',
     output = 'screen',
-    # prefix = 'xterm -e gdb -ex run --args',
+    prefix = 'xterm -e gdb -ex run --args',
     parameters = [
       {'config_path':          config_path},
     ],
@@ -49,15 +49,15 @@ def generate_launch_description():
   )
 
   # Test Node
-  # test_node = Node(
-  #   package = 'capstone',
-  #   executable = 'track_test.py',
-  #   name = 'test_node',
-  #   output = 'screen',
-  #   parameters = [
-  #     {'config_path':      config_path},
-  #   ],
-  # )
+  test_node = Node(
+    package = 'capstone',
+    executable = 'track_test.py',
+    name = 'test_node',
+    output = 'screen',
+    parameters = [
+      {'config_path':      config_path},
+    ],
+  )
 
-  return LaunchDescription([bridge_node, ctrl_node, vision_node])
-  # return LaunchDescription([bridge_node, ctrl_node, vision_node, test_node])
+  # return LaunchDescription([bridge_node, ctrl_node, vision_node])
+  return LaunchDescription([bridge_node, ctrl_node, vision_node, test_node])

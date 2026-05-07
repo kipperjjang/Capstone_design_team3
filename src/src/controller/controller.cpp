@@ -1,5 +1,7 @@
 #include "controller/controller.hpp"
 
+#include <iostream>
+
 namespace {
 Eigen::Vector2d computeBellAngle(const RobotState &state) {
   const double p = state.p(0);
@@ -32,7 +34,7 @@ Eigen::Vector2d computeBellAngle(const RobotState &state) {
 
 void Controller::run(const RobotState &state) {
   state_ = state;
-  const Eigen::Vector2d img_center(320.0, 240.0);
+  const Eigen::Vector2d img_center = state.img_center;
 
   // Update FSM State
   fsm_.update(state_);
@@ -50,7 +52,7 @@ void Controller::run(const RobotState &state) {
       Eigen::Vector2d u = -config_.Kp * (state.p - img_center) - config_.Kd * state.v;
       // Eigen::Vector2d u = computeBellAngle(state);
       u = (M_PI / 180.0) * u;
-
+      std::cout << u.transpose() << std::endl;
       u_.update(u, false, false);
       break;
     }

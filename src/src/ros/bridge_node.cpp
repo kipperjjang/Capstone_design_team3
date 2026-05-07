@@ -60,6 +60,8 @@ std::vector<uint8_t> makeControlFrame(
 
   appendBytes(frame, &msg.u_yaw, sizeof(msg.u_yaw));
   appendBytes(frame, &msg.u_pitch, sizeof(msg.u_pitch));
+  // appendBytes(frame, &msg.u_yaw_dot, sizeof(msg.u_yaw_dot));
+  // appendBytes(frame, &msg.u_pitch_dot, sizeof(msg.u_pitch_dot));
 
   uint8_t flags = 0;
   if (msg.fire) {
@@ -92,8 +94,8 @@ BridgeNode::BridgeNode() : Node("bridge_node") {
   control_sub_ = this->create_subscription<custom_msgs::msg::ControlMsg>("/control", 10, std::bind(&BridgeNode::controlCallback, this, _1));
   joint_pub_ = this->create_publisher<custom_msgs::msg::JointMsg>("/joint", 10);
 
-  const int period_ms = std::max(1, static_cast<int>(1000.0 / port_config.watchdog_frequency));
-  watchdog_timer_ = this->create_wall_timer(std::chrono::milliseconds(period_ms), std::bind(&BridgeNode::timerCallback, this));
+  // const int period_ms = std::max(1, static_cast<int>(1000.0 / port_config.watchdog_frequency));
+  // watchdog_timer_ = this->create_wall_timer(std::chrono::milliseconds(period_ms), std::bind(&BridgeNode::timerCallback, this));
   buffer_.reserve(1024);
 }
 
@@ -110,6 +112,9 @@ void BridgeNode::timerCallback() {
 bool BridgeNode::writeSerialFrame(const custom_msgs::msg::ControlMsg &msg) {
   last_write_frame_ = makeControlFrame(msg, previous_read_status_, write_seq_);
   ++write_seq_;
+
+  custom_msgs::msg::JointMsg msg_;
+  joint_pub_->publish(msg_);
 
   return writeFrameToSerial(last_write_frame_);
 }

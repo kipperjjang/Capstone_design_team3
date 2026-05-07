@@ -19,12 +19,13 @@ public:
 
   // Utils
   const RobotState& getState(bool isProcess);
+  const RobotState& getState(double dt);
   bool isInitialized() const { return initialized_; }
 
-private: 
   // Configuration
   EstimatorConfig config_;
-
+  
+private: 
   // State
   RobotState state_;
   bool initialized_{false};

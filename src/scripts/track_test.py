@@ -20,10 +20,10 @@ class TrackTest(Node):
     self.declare_parameter('image_topic', '/vision/image')
     self.declare_parameter('debug_topic', '/test/debug')
     self.declare_parameter('window_name', 'track_test')
-    self.declare_parameter('fallback_width', 640)
-    self.declare_parameter('fallback_height', 480)
+    self.declare_parameter('fallback_width', 540)
+    self.declare_parameter('fallback_height', 540)
     self.declare_parameter('history_size', 120)
-    self.declare_parameter('draw_rate_hz', 30.0)
+    self.declare_parameter('draw_rate_hz', 60.0)
     self.declare_parameter('stale_timeout_sec', 0.5)
     self.declare_parameter('velocity_arrow_scale', 0.05)
     self.declare_parameter('max_arrow_length', 90.0)
@@ -51,9 +51,9 @@ class TrackTest(Node):
     self.yolo_history = deque(maxlen=self.history_size)
     self.estimate_history = deque(maxlen=self.history_size)
 
-    self.create_subscription(Image, self.image_topic, self.imageCallback, 10)
-    self.create_subscription(VisionMsg, self.vision_topic, self.visionCallback, 10)
-    self.create_subscription(TestDebug, self.debug_topic, self.debugCallback, 10)
+    self.create_subscription(Image, self.image_topic, self.imageCallback, 1)
+    self.create_subscription(VisionMsg, self.vision_topic, self.visionCallback, 1)
+    self.create_subscription(TestDebug, self.debug_topic, self.debugCallback, 1)
 
     period = 1.0 / max(self.draw_rate_hz, 1.0)
     self.draw_timer = self.create_timer(period, self.draw)
@@ -218,7 +218,7 @@ class TrackTest(Node):
     if self.latest_debug is not None and self.latest_debug.has_control:
       ctrl = self.latest_debug
       control_text = (
-        f'u=({ctrl.u_yaw:.2f}, {ctrl.u_pitch:.2f}) '
+        f'u=({ctrl.u_yaw:.4f}, {ctrl.u_pitch:.4f}) '
         f'fire={ctrl.fire} reload={ctrl.reload}')
       cv2.putText(
         image,

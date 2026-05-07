@@ -5,6 +5,7 @@ import numpy as np
 import rclpy
 import threading
 import time
+from typing import Optional
 from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
 from ultralytics import YOLO
@@ -41,7 +42,7 @@ def jetson_gstreamer_pipeline(
 
 
 class LatestFrameReader:
-    def __init__(self, pipeline):
+    def __init__(self, pipeline: Optional[any] = None):
         self.pipeline = pipeline
         self.cap = None
         self.running = False
@@ -53,7 +54,10 @@ class LatestFrameReader:
         self.frame_count = 0
 
     def start(self):
-        self.cap = cv2.VideoCapture(self.pipeline, cv2.CAP_GSTREAMER)
+        if self.pipeline is not None:
+          self.cap = cv2.VideoCapture(self.pipeline, cv2.CAP_GSTREAMER)
+        else:
+          self.cap = cv2.VideoCapture(0)
 
         if not self.cap.isOpened():
             raise RuntimeError("Cannot open Jetson CSI camera with GStreamer.")
@@ -97,7 +101,7 @@ class VisionNode(Node):
     super().__init__("vision_node")
 
     self.declare_parameter("config_path", "")
-    self.declare_parameter("yolo_model_path", "/home/capstonet3/ros2_ws/src/capstone/yolo_models/robot_yolo_p4_416_combine/weights/best.engine")
+    self.declare_parameter("yolo_model_path", "/home/capstonet3/ros2_ws/src/capstone/yolo_models/robot_yolo_p4_416_combine_new/weights/best.engine")
     self.declare_parameter("publish_image", True)
     self.declare_parameter("max_motion_dt", 0.5)
 
@@ -125,19 +129,28 @@ class VisionNode(Node):
     self.prev_velocity = None
     self.prev_sample_time = None
     self.is_detected = False
+
+    # self.cap = cv2.VideoCapture(0)
+
     self.img = None
+
+    self.img_height = None
+    self.img_width = None
+
+    self.img_center = None
 
     pipeline = jetson_gstreamer_pipeline(
         sensor_id=0,
-        capture_width=1280,
-        capture_height=720,
-        display_width=640,
-        display_height=480,
-        framerate=30,
+        capture_width=1080,
+        capture_height=1080,
+        display_width=540,
+        display_height=540,
+        framerate=60,
         flip_method=0,
     )
-
+# 
     self.reader = LatestFrameReader(pipeline)
+    # self.reader = LatestFrameReader()
     self.reader.start()
 
     self.state_pub = self.create_publisher(VisionMsg, "/vision", 10)
@@ -145,15 +158,21 @@ class VisionNode(Node):
 
   def read_img(self):
     frame, frame_ts, frame_count = self.reader.get_latest_frame()
+    # ret, frame = self.cap.read()
 
     if frame is None:
       time.sleep(0.001)
 
+    if self.img_height is None or self.img_width is None:
+      self.img_height, self.img_width = frame.shape[:2]
+      self.img_center = np.array([self.img_width, self.img_height], dtype=np.float32) / 2.0
+
+
     # anti clock 90
-    frame = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
+    # frame = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
 
     # updown flip
-    # frame = cv2.rotate(frame, cv2.ROTATE_180)
+    frame = cv2.rotate(frame, cv2.ROTATE_180)
 
     self.img = frame
     return True
@@ -164,8 +183,6 @@ class VisionNode(Node):
     if self.img is None:
       return
 
-    height, width = self.img.shape[:2]
-    screen_center_x = width // 2
 
     results = self.model(
         self.img,
@@ -248,6 +265,7 @@ class VisionNode(Node):
     msg.v = self.velocity.tolist() if self.has_velocity else []
     msg.a = self.acceleration.tolist() if self.has_acceleration else []
     msg.bbox = self.box_size.tolist()
+    msg.img_center = self.img_center.tolist()
     # msg.confidence = float(self.confidence)
     msg.covariance = []
     msg.source_mode = "YOLO"

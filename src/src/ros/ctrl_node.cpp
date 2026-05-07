@@ -44,19 +44,19 @@ CtrlNode::CtrlNode() : Node("control_node") {
 }
 
 void CtrlNode::jointCallback(const custom_msgs::msg::JointMsg::SharedPtr msg) {
-  // Cache joint data
-  auto now = this->now();
-  if (first_joint_) {
-    last_joint_time_ = now;
-    first_joint_ = false;
-  }
-  const double dt = (now - last_joint_time_).seconds();
+  // // Cache joint data
+  // auto now = this->now();
+  // if (first_joint_) {
+  //   last_joint_time_ = now;
+  //   first_joint_ = false;
+  // }
+  // const double dt = (now - last_joint_time_).seconds();
 
-  joint_ = toEigen(msg->joint);
-  joint_vel_ = toEigen(msg->joint_vel);
-  if (estimator_->isInitialized()) {
-    estimator_->update(joint_, joint_vel_, dt); 
-  }
+  // joint_ = toEigen(msg->joint);
+  // joint_vel_ = toEigen(msg->joint_vel);
+  // if (estimator_->isInitialized()) {
+  //   estimator_->update(joint_, joint_vel_, dt); 
+  // }
 }
 
 void CtrlNode::visionCallback(const custom_msgs::msg::VisionMsg::SharedPtr msg) {
@@ -91,7 +91,8 @@ void CtrlNode::timerCallback() {
   estimator_->update(t_now);
 
   // Run Controller
-  auto state = estimator_->getState(true);
+  // auto state = estimator_->getState(true);
+  auto state = estimator_->getState(estimator_->config_.prediction_time);
   controller_->run(state);
 
   // Publish control input to the plant

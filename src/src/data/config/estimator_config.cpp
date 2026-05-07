@@ -11,6 +11,8 @@ EstimatorConfig EstimatorConfig::load(const std::string &path) {
   const YAML::Node file = YAML::LoadFile(path);
   const YAML::Node kalman = file["estimator"]["kalman"];
   
+  config.prediction_time = file["estimator"]["prediction_time"].as<double>();
+
   config.hz = file["controller"]["frequency"].as<double>();
   config.q_acc = kalman["q_acc"].as<double>();
   config.r_detected = kalman["r_detected"].as<double>();

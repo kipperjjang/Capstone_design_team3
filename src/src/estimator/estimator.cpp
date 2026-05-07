@@ -12,6 +12,18 @@ const RobotState &Estimator::getState(bool isProcess) {
   return state_;
 }
 
+const RobotState &Estimator::getState(double dt) {
+  if (kf_.isInitialized()) {
+    const Eigen::VectorXd &x = kf_.getPredictedState(dt);
+    state_.p = x.segment<2>(0);
+    state_.v = x.segment<2>(2);
+    state_.a = x.segment<2>(4);
+    state_.has_velocity = true;
+    state_.has_acceleration = true;
+  }
+  return state_;
+}
+
 void Estimator::init(const RobotState &state) {
   // Initialize estimator
   if (!state.detected && !state.tracked) return;
