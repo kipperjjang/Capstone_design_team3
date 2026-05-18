@@ -25,6 +25,7 @@ class VisionTest(Node):
     self.declare_parameter('width', 1280)
     self.declare_parameter('height', 760)
     self.declare_parameter('use_fixed_view', True)
+    self.declare_parameter('view_scale', 0.5)
     self.declare_parameter('view_min_x', 0.0)
     self.declare_parameter('view_max_x', 640.0)
     self.declare_parameter('view_min_y', 0.0)
@@ -39,6 +40,7 @@ class VisionTest(Node):
     self.width = int(self.get_parameter('width').value)
     self.height = int(self.get_parameter('height').value)
     self.use_fixed_view = bool(self.get_parameter('use_fixed_view').value)
+    self.view_scale = float(self.get_parameter('view_scale').value)
     self.view_min_x = float(self.get_parameter('view_min_x').value)
     self.view_max_x = float(self.get_parameter('view_max_x').value)
     self.view_min_y = float(self.get_parameter('view_min_y').value)
@@ -301,6 +303,15 @@ class VisionTest(Node):
       return None
 
     image = self.latest_image.copy()
+
+    image = cv2.resize(
+        image,
+        None,
+        fx=self.view_scale,
+        fy=self.view_scale,
+        interpolation=cv2.INTER_AREA
+    )
+
     raw_points = [
       (int(round(sample[2][0])), int(round(sample[2][1])))
       for sample in self.raw_history

@@ -42,39 +42,42 @@ def jetson_gstreamer_pipeline(
 
 class WebCAMLatestFrameReader:
     def __init__(self, src=0, width=1280, height=720, fps=30):
-        self.cap = cv2.VideoCapture(src, cv2.CAP_V4L2)
+        self.src = src
+        self.width = width
+        self.height = height
+        self.fps = fps
+
+        self.cap = None
+        self.running = False
+        self.thread = None
+
+    def start(self):
+        self.cap = cv2.VideoCapture(self.src, cv2.CAP_V4L2)
+
+        # MJPG configuration
+        self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
+        self.cap.set(cv2.CAP_PROP_FPS, self.fps)
+        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
         if not self.cap.isOpened():
             raise RuntimeError(
-                f"Camera /dev/video{src} could not be opened. "
+                f"Camera /dev/video{self.src} could not be opened. "
                 "Try src=1, src=2, or check v4l2-ctl --list-devices."
             )
 
-        # Linux C920e에서는 MJPG 설정이 중요
-        self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
-        self.cap.set(cv2.CAP_PROP_FPS, fps)
-        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-
-        print("Actual width :", self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        print("Actual height:", self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        print("Actual FPS   :", self.cap.get(cv2.CAP_PROP_FPS))
-
-        self.ret, self.frame = self.cap.read()
-
-        if not self.ret:
-            raise RuntimeError("Camera opened, but first frame could not be read.")
-
         self.running = True
-        self.lock = threading.Lock()
-
-        self.thread = threading.Thread(target=self.update, daemon=True)
+        self.thread = threading.Thread(target=self._reader_loop, daemon=True)
         self.thread.start()
 
-    def update(self):
+    def _reader_loop(self):
         while self.running:
             ret, frame = self.cap.read()
+            
+            if not ret:
+              raise RuntimeError("Camera opened, but first frame could not be read.")
+            
             if ret:
                 with self.lock:
                     self.ret = ret
@@ -84,12 +87,7 @@ class WebCAMLatestFrameReader:
         with self.lock:
             if self.frame is None:
                 return False, None
-            return self.ret, self.frame.copy()
-
-    def stop(self):
-        self.running = False
-        self.thread.join(timeout=1.0)
-        self.cap.release()
+            return self.ret, self.frame.copy()    
 
     def get_latest_frame(self):
         with self.lock:
@@ -97,6 +95,15 @@ class WebCAMLatestFrameReader:
                 return None, None, None
 
             return self.latest_frame.copy(), self.latest_timestamp, self.frame_count
+        
+    def stop(self):
+        self.running = False
+
+        if self.thread is not None:
+            self.thread.join(timeout=1.0)
+
+        if self.cap is not None:
+            self.cap.release()
 
 class LatestFrameReader:
     def __init__(self, pipeline: Optional[any] = None):
@@ -117,7 +124,10 @@ class LatestFrameReader:
           self.cap = cv2.VideoCapture(0)
 
         if not self.cap.isOpened():
-            raise RuntimeError("Cannot open Jetson CSI camera with GStreamer.")
+            if self.pipeline is not None:
+                raise RuntimeError("Cannot open Jetson CSI camera with GStreamer.")
+            else:
+                raise RuntimeError("Cannot open default camera.")
 
         self.running = True
         self.thread = threading.Thread(target=self._reader_loop, daemon=True)
@@ -125,7 +135,6 @@ class LatestFrameReader:
 
     def _reader_loop(self):
         while self.running:
-            # print("running")
             ret, frame = self.cap.read()
 
             if not ret:
@@ -161,6 +170,7 @@ class VisionNode(Node):
     self.declare_parameter("yolo_model_path", "/home/capstonet3/ros2_ws/src/capstone/yolo_models/robot_yolo_p4_416_combine_new_scaled_0_8/weights/best.engine")
     self.declare_parameter("publish_image", True)
     self.declare_parameter("max_motion_dt", 0.5)
+    self.declare_parameter("camera_type", 0)  # "CSI" : 0 or "WebCAM" : 1
 
     self.config_path = self.get_parameter("config_path").value
     # self.config = load_runtime_config(self.config_path)
@@ -168,6 +178,7 @@ class VisionNode(Node):
 
     self.publish_image = self.get_parameter("publish_image").value
     self.max_motion_dt = float(self.get_parameter("max_motion_dt").value)
+    self.camera_type = self.get_parameter("camera_type").value
     self.yolo_model_path = self.get_parameter("yolo_model_path").value
 
     # self.target_class = int(vision_config.get("target_class", 1))
@@ -175,7 +186,6 @@ class VisionNode(Node):
     self.box_size = np.zeros(2, dtype=np.float32)
     
     self.bridge = CvBridge()
-    # self.capture = cv2.VideoCapture(0)
     self.model = YOLO(self.yolo_model_path)
     self.position = np.zeros(2, dtype=np.float32)
     self.velocity = np.zeros(2, dtype=np.float32)
@@ -187,28 +197,27 @@ class VisionNode(Node):
     self.prev_sample_time = None
     self.is_detected = False
 
-    # self.cap = cv2.VideoCapture(0)
-
     self.img = None
-
     self.img_height = None
     self.img_width = None
-
     self.img_center = None
 
-    pipeline = jetson_gstreamer_pipeline(
-        sensor_id=0,
-        capture_width=1080,
-        capture_height=1080,
-        display_width=540,
-        display_height=540,
-        framerate=60,
-        flip_method=0,
-    )
-# 
-    # self.reader = LatestFrameReader(pipeline)
-    self.reader = WebCAMLatestFrameReader(src=1, width=1920, height=1280, fps=30)
-    # self.reader.start()
+    if self.camera_type == 0:
+      self.reader = LatestFrameReader(
+         jetson_gstreamer_pipeline(
+          sensor_id=0,
+          capture_width=1080,
+          capture_height=1080,
+          display_width=540,
+          display_height=540,
+          framerate=60,
+          flip_method=0,
+       )
+      ) 
+    elif self.camera_type == 1:
+      self.reader = WebCAMLatestFrameReader(src=1, width=1920, height=1280, fps=30)
+
+    self.reader.start()
 
     self.state_pub = self.create_publisher(VisionMsg, "/vision", 10)
     self.image_pub = self.create_publisher(Image, "/vision/image", 10) if self.publish_image else None
@@ -223,7 +232,6 @@ class VisionNode(Node):
     if self.img_height is None or self.img_width is None:
       self.img_height, self.img_width = frame.shape[:2]
       self.img_center = np.array([self.img_width, self.img_height], dtype=np.float32) / 2.0
-
 
     # anti clock 90
     # frame = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
@@ -261,7 +269,6 @@ class VisionNode(Node):
     # self.confidence = np.max(confidences) 
     # best_index = int(np.argmax(confidences))
     x1, y1, x2, y2 = boxes.xyxy.cpu().numpy()[0]
-    print(x1, y1, x2, y2)
     self.box_size = np.abs(np.array([x2 - x1, y2 - y1]))
     self.position = np.array([(x1 + x2) / 2.0, (y1 + y2) / 2.0], dtype=np.float32)
     self.is_detected = True
