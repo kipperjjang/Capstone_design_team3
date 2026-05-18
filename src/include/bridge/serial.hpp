@@ -9,7 +9,7 @@
 
 class Serial {
 public:
-  explicit Serial(const PortConfig &config);
+  explicit Serial(const PortConfig &config, bool rw);
   ~Serial() { closeSerialPort(); }
 
   bool isOpen() const { return serial_port_fd_ >= 0; }
@@ -19,7 +19,7 @@ public:
   ssize_t writeSerial(const std::vector<uint8_t> &data);
 
 private:
-  bool openSerialPort();
+  bool openSerialPort(bool rw);
   bool configureSerialPort();
   void closeSerialPort();
 

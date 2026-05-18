@@ -28,7 +28,7 @@ private:
   // ROS
   rclcpp::Subscription<custom_msgs::msg::ControlMsg>::SharedPtr control_sub_;
   rclcpp::Publisher<custom_msgs::msg::JointMsg>::SharedPtr joint_pub_;
-  // rclcpp::TimerBase::SharedPtr watchdog_timer_;
+  rclcpp::TimerBase::SharedPtr watchdog_timer_;
 
   // Serial
   std::unique_ptr<Serial> serial_;

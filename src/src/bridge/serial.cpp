@@ -10,12 +10,13 @@
 #include <cstring>
 #include <iostream>
 
-Serial::Serial(const PortConfig &config) : config_(config) {
+Serial::Serial(const PortConfig &config, bool rw) : config_(config) {
   // Initialize serial port
-  if (!openSerialPort()) return;
+  if (!openSerialPort(rw)) return;
 
+  auto port = rw ? config_.read_port : config_.write_port;
   std::cout << "Serial port opened and configured: " << config_.name << " ("
-            << config_.port << ")" << std::endl;
+            << port << ")" << std::endl;
 }
 
 ssize_t Serial::readSerial(uint8_t *buffer, std::size_t size) {
@@ -136,11 +137,12 @@ static bool configureParity(termios2 *uart_config, int parity) {
   }
 }
 
-bool Serial::openSerialPort() {
-  serial_port_fd_ = open(config_.port.c_str(), O_RDWR | O_NOCTTY);
+bool Serial::openSerialPort(bool rw) {
+  auto port = rw ? config_.read_port : config_.write_port;
+  serial_port_fd_ = open(port.c_str(), O_RDWR | O_NOCTTY | O_NONBLOCK);
   if (serial_port_fd_ < 0) {
     std::cerr << "Failed to open serial port " << config_.name << " at "
-              << config_.port << ": " << std::strerror(errno) << std::endl;
+              << port << ": " << std::strerror(errno) << std::endl;
     return false;
   }
 
@@ -203,7 +205,7 @@ bool Serial::configureSerialPort() {
   uart_config.c_ispeed = static_cast<speed_t>(config_.baud);
   uart_config.c_ospeed = static_cast<speed_t>(config_.baud);
   uart_config.c_cc[VMIN] = 0;
-  uart_config.c_cc[VTIME] = 1;
+  uart_config.c_cc[VTIME] = 0;
 
   if (ioctl(serial_port_fd_, TCSETS2, &uart_config) < 0) {
     std::cerr << "Could not set serial configuration for " << config_.name << ": "

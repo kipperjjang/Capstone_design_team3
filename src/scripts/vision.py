@@ -40,6 +40,63 @@ def jetson_gstreamer_pipeline(
         f"appsink drop=true max-buffers=1 sync=false"
     )
 
+class WebCAMLatestFrameReader:
+    def __init__(self, src=0, width=1280, height=720, fps=30):
+        self.cap = cv2.VideoCapture(src, cv2.CAP_V4L2)
+
+        if not self.cap.isOpened():
+            raise RuntimeError(
+                f"Camera /dev/video{src} could not be opened. "
+                "Try src=1, src=2, or check v4l2-ctl --list-devices."
+            )
+
+        # Linux C920e에서는 MJPG 설정이 중요
+        self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+        self.cap.set(cv2.CAP_PROP_FPS, fps)
+        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+
+        print("Actual width :", self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        print("Actual height:", self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        print("Actual FPS   :", self.cap.get(cv2.CAP_PROP_FPS))
+
+        self.ret, self.frame = self.cap.read()
+
+        if not self.ret:
+            raise RuntimeError("Camera opened, but first frame could not be read.")
+
+        self.running = True
+        self.lock = threading.Lock()
+
+        self.thread = threading.Thread(target=self.update, daemon=True)
+        self.thread.start()
+
+    def update(self):
+        while self.running:
+            ret, frame = self.cap.read()
+            if ret:
+                with self.lock:
+                    self.ret = ret
+                    self.frame = frame
+
+    def read(self):
+        with self.lock:
+            if self.frame is None:
+                return False, None
+            return self.ret, self.frame.copy()
+
+    def stop(self):
+        self.running = False
+        self.thread.join(timeout=1.0)
+        self.cap.release()
+
+    def get_latest_frame(self):
+        with self.lock:
+            if self.latest_frame is None:
+                return None, None, None
+
+            return self.latest_frame.copy(), self.latest_timestamp, self.frame_count
 
 class LatestFrameReader:
     def __init__(self, pipeline: Optional[any] = None):
@@ -101,7 +158,7 @@ class VisionNode(Node):
     super().__init__("vision_node")
 
     self.declare_parameter("config_path", "")
-    self.declare_parameter("yolo_model_path", "/home/capstonet3/ros2_ws/src/capstone/yolo_models/robot_yolo_p4_416_combine_new/weights/best.engine")
+    self.declare_parameter("yolo_model_path", "/home/capstonet3/ros2_ws/src/capstone/yolo_models/robot_yolo_p4_416_combine_new_scaled_0_8/weights/best.engine")
     self.declare_parameter("publish_image", True)
     self.declare_parameter("max_motion_dt", 0.5)
 
@@ -149,19 +206,19 @@ class VisionNode(Node):
         flip_method=0,
     )
 # 
-    self.reader = LatestFrameReader(pipeline)
-    # self.reader = LatestFrameReader()
-    self.reader.start()
+    # self.reader = LatestFrameReader(pipeline)
+    self.reader = WebCAMLatestFrameReader(src=1, width=1920, height=1280, fps=30)
+    # self.reader.start()
 
     self.state_pub = self.create_publisher(VisionMsg, "/vision", 10)
     self.image_pub = self.create_publisher(Image, "/vision/image", 10) if self.publish_image else None
 
   def read_img(self):
-    frame, frame_ts, frame_count = self.reader.get_latest_frame()
-    # ret, frame = self.cap.read()
+    ret, frame = self.reader.read()
 
     if frame is None:
       time.sleep(0.001)
+      return False
 
     if self.img_height is None or self.img_width is None:
       self.img_height, self.img_width = frame.shape[:2]
@@ -172,7 +229,7 @@ class VisionNode(Node):
     # frame = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
 
     # updown flip
-    frame = cv2.rotate(frame, cv2.ROTATE_180)
+    # frame = cv2.rotate(frame, cv2.ROTATE_180)
 
     self.img = frame
     return True
@@ -187,7 +244,7 @@ class VisionNode(Node):
     results = self.model(
         self.img,
         imgsz=416,
-        conf=0.70,
+        conf=0.65,
         classes=[1],
         verbose=False,
     )
@@ -291,10 +348,10 @@ class VisionNode(Node):
         executor.spin_once(timeout_sec=0.0)
     finally:
       executor.shutdown()
-      # self.capture.release()
+      self.reader.stop()
       self.destroy_node()
       if rclpy.ok():
-        rclpy.shutdown()
+          rclpy.shutdown()
 
 
 def main():

@@ -5,7 +5,7 @@ vision:
 
 # Controller parameters 
 controller:
-  Kp:                     [0.01 , -0.005]
+  Kp:                     [0.015 , 0.05]
   Kd:                     [-0.000, -0.00]
   
   frequency:              50        # Frequency of the control node
@@ -38,7 +38,8 @@ estimator:
 bridge:
   serial:
     name:                 "usb"
-    port:                 "/dev/ttyACM0"  # Read/write bridge frames
+    read_port:            "/dev/ttyTHS1"  # Read frame
+    write_port:           "/dev/ttyACM0"  # Write frame
     baud:                 115200
     data_bits:            8
     stop_bits:            1

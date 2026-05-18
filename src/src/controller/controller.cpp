@@ -3,18 +3,20 @@
 #include <iostream>
 
 namespace {
-Eigen::Vector2d computeBellAngle(const RobotState &state) {
-  const double p = state.p(0);
-  const double q = state.p(1);
+Eigen::Vector2d computeBellAngle(const RobotState &state, const Eigen::Vector2d &img_center) {
+  const Eigen::Vector2d vec = state.p - img_center;
+  const double p = vec(0);
+  const double q = vec(1);
   const double c1 = std::cos(state.joint(0));
   const double s1 = std::sin(state.joint(0));
   const double c2 = std::cos(state.joint(1));
   const double s2 = std::sin(state.joint(1));
-  const double f = 0.016 * 326.0;
+  const double f = 1360.0;
   
   // Compute yaw and pitch angle of the bell with respect to the base frame
-  const double alpha = std::atan2(-p*c1 + q*s1*s2 + f*s1*c2, p*s1+q*c1*s2+f*c1*c2);
-  const double beta = std::atan2(-q*c2 + f*c2, std::sqrt(p*p + std::pow(q*s2 + f*c2, 2)));
+  const double alpha = std::atan2(-p*c1 - q*s1*s2 + f*s1*c2, p*s1 - q*c1*s2+f*c1*c2);
+  const double n = q*s2 + f*c2;
+  const double beta = std::atan2(q*c2 + f*s2, std::sqrt(p*p + n*n));
 
   // Compute angular velocity of the bell
   // const double R = std::sqrt(p*p + std::pow(q*s2+f*c2, 2));
@@ -34,8 +36,7 @@ Eigen::Vector2d computeBellAngle(const RobotState &state) {
 
 void Controller::run(const RobotState &state) {
   state_ = state;
-  const Eigen::Vector2d img_center = state.img_center;
-
+  const Eigen::Vector2d img_center = state.img_center;// + Eigen::Vector2d(0.0, 150.0);
   // Update FSM State
   fsm_.update(state_);
 
@@ -49,9 +50,10 @@ void Controller::run(const RobotState &state) {
 
     case FSMState::TRACK: {
       // Compute desired angle
-      Eigen::Vector2d u = -config_.Kp * (state.p - img_center) - config_.Kd * state.v;
-      // Eigen::Vector2d u = computeBellAngle(state);
+      Eigen::Vector2d u = config_.Kp * (img_center - state.p) - config_.Kd * state.v;
+      // Eigen::Vector2d u = computeBellAngle(state, img_center);
       u = (M_PI / 180.0) * u;
+      // std::cout << computeBellAngle(state, img_center).transpose() << std::endl;
       std::cout << u.transpose() << std::endl;
       u_.update(u, false, false);
       break;
