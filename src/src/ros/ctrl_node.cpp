@@ -21,10 +21,16 @@ CtrlNode::CtrlNode() : Node("control_node") {
   // Read Configuration
   std::string config_path;
   std::string vision_topic;
+  std::string vision_webcam_topic;
+  std::string vision_picam_topic;
   this->declare_parameter<std::string>("config_path", "");
   this->declare_parameter<std::string>("vision_topic", "/vision");
+  this->declare_parameter<std::string>("vision_webcam_topic", "/vision_webcam");
+  this->declare_parameter<std::string>("vision_picam_topic", "/vision_picam");
   this->get_parameter("config_path", config_path);
   this->get_parameter("vision_topic", vision_topic);
+  this->get_parameter("vision_webcam_topic", vision_webcam_topic);
+  this->get_parameter("vision_picam_topic", vision_picam_topic);
 
   const EstimatorConfig estimator_config = EstimatorConfig::load(config_path);
   const ControlConfig controller_config = ControlConfig::load(config_path);
@@ -35,6 +41,8 @@ CtrlNode::CtrlNode() : Node("control_node") {
   
   // Subscriber and Publisher
   vision_sub_ = this->create_subscription<custom_msgs::msg::VisionMsg>(vision_topic, 1, std::bind(&CtrlNode::visionCallback, this, _1));
+  vision_webcam_sub_ = this->create_subscription<custom_msgs::msg::VisionMsg>(vision_webcam_topic, 1, std::bind(&CtrlNode::visionCallback, this, _1));
+  vision_picam_sub_ = this->create_subscription<custom_msgs::msg::VisionMsg>(vision_picam_topic, 1, std::bind(&CtrlNode::visionCallback, this, _1));
   joint_sub_ = this->create_subscription<custom_msgs::msg::JointMsg>("/joint", 1, std::bind(&CtrlNode::jointCallback, this, _1));
   ctrl_pub_ = this->create_publisher<custom_msgs::msg::ControlMsg>("/control", 1);
   debug_pub_ = this->create_publisher<custom_msgs::msg::TestDebug>("/test/debug", 1);
@@ -68,7 +76,7 @@ void CtrlNode::visionCallback(const custom_msgs::msg::VisionMsg::SharedPtr msg) 
   RobotState vision_state(msg);
   last_raw_state_ = vision_state;
   has_raw_state_ = true;
-
+  
   if (!estimator_->isInitialized()) {
     estimator_->init(vision_state);
   } else {
@@ -107,6 +115,7 @@ void CtrlNode::publishControl(const ControlState &x) {
   msg.u_pitch = static_cast<float>(x.u_pitch);
   msg.fire = x.fire;
   msg.reload = x.reload;
+  msg.manual = false;
   ctrl_pub_->publish(msg);
 }
 

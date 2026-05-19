@@ -19,5 +19,5 @@ float32[] img_center
 float32 confidence
 float32[] covariance
 
-# Current Vision Mode
-string source_mode
+# Current Camera Type
+string camera

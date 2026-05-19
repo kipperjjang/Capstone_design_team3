@@ -48,6 +48,8 @@ class WebCAMLatestFrameReader:
         self.fps = fps
 
         self.cap = None
+        self.frame = None
+        self.lock = threading.Lock()
         self.running = False
         self.thread = None
 
@@ -111,6 +113,7 @@ class LatestFrameReader:
         self.cap = None
         self.running = False
         self.thread = None
+        self.frame = None
 
         self.lock = threading.Lock()
         self.latest_frame = None
@@ -167,10 +170,14 @@ class VisionNode(Node):
     super().__init__("vision_node")
 
     self.declare_parameter("config_path", "")
-    self.declare_parameter("yolo_model_path", "/home/capstonet3/ros2_ws/src/capstone/yolo_models/robot_yolo_p4_416_combine_new_scaled_0_8/weights/best.engine")
+    self.declare_parameter("yolo_model_path", "/home/capstonet3/ros2_ws/src/capstone/yolo_models/robot_yolo_p4_416_combine_new/weights/best.engine")
+    # self.declare_parameter("yolo_model_path", "/home/capstonet3/ros2_ws/src/capstone/yolo_models/robot_yolo_p4_416_combine_new_scaled_0_8/weights/best.engine")
     self.declare_parameter("publish_image", True)
     self.declare_parameter("max_motion_dt", 0.5)
     self.declare_parameter("camera_type", 0)  # "CSI" : 0 or "WebCAM" : 1
+    self.declare_parameter("camera", "")
+    self.declare_parameter("vision_topic", "/vision")
+    self.declare_parameter("image_topic", "/vision/image")
 
     self.config_path = self.get_parameter("config_path").value
     # self.config = load_runtime_config(self.config_path)
@@ -179,7 +186,12 @@ class VisionNode(Node):
     self.publish_image = self.get_parameter("publish_image").value
     self.max_motion_dt = float(self.get_parameter("max_motion_dt").value)
     self.camera_type = self.get_parameter("camera_type").value
+    self.camera = self.get_parameter("camera").value
+    self.vision_topic = self.get_parameter("vision_topic").value
+    self.image_topic = self.get_parameter("image_topic").value
     self.yolo_model_path = self.get_parameter("yolo_model_path").value
+    if not self.camera:
+      self.camera = "picam" if self.camera_type == 0 else "webcam"
 
     # self.target_class = int(vision_config.get("target_class", 1))
     # self.confidence = float(vision_config.get("confidence", 0.2))
@@ -206,24 +218,27 @@ class VisionNode(Node):
       self.reader = LatestFrameReader(
          jetson_gstreamer_pipeline(
           sensor_id=0,
-          capture_width=1080,
-          capture_height=1080,
-          display_width=540,
-          display_height=540,
+          capture_width=1280,
+          capture_height=720,
+          display_width=1280,
+          display_height=720,
           framerate=60,
           flip_method=0,
        )
       ) 
     elif self.camera_type == 1:
-      self.reader = WebCAMLatestFrameReader(src=1, width=1920, height=1280, fps=30)
+      self.reader = WebCAMLatestFrameReader(src=1, width=1920, height=1080, fps=30)
 
     self.reader.start()
 
-    self.state_pub = self.create_publisher(VisionMsg, "/vision", 10)
-    self.image_pub = self.create_publisher(Image, "/vision/image", 10) if self.publish_image else None
+    self.state_pub = self.create_publisher(VisionMsg, self.vision_topic, 10)
+    self.image_pub = self.create_publisher(Image, self.image_topic, 10) if self.publish_image else None
 
   def read_img(self):
-    ret, frame = self.reader.read()
+    if self.camera_type == 0:
+      frame, frame_ts, frame_count = self.reader.get_latest_frame()
+    elif self.camera_type == 1:
+      ret, frame = self.reader.read()
 
     if frame is None:
       time.sleep(0.001)
@@ -237,7 +252,8 @@ class VisionNode(Node):
     # frame = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
 
     # updown flip
-    # frame = cv2.rotate(frame, cv2.ROTATE_180)
+    if self.camera_type == 0:
+     frame = cv2.rotate(frame, cv2.ROTATE_180)
 
     self.img = frame
     return True
@@ -332,7 +348,7 @@ class VisionNode(Node):
     msg.img_center = self.img_center.tolist()
     # msg.confidence = float(self.confidence)
     msg.covariance = []
-    msg.source_mode = "YOLO"
+    msg.camera = self.camera
     self.state_pub.publish(msg)
 
   def publishImage(self):

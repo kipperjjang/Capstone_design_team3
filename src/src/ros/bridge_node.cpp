@@ -63,13 +63,18 @@ std::vector<uint8_t> makeControlFrame(
   // appendBytes(frame, &msg.u_yaw_dot, sizeof(msg.u_yaw_dot));
   // appendBytes(frame, &msg.u_pitch_dot, sizeof(msg.u_pitch_dot));
 
-  static uint8_t flags = 0x01;
+  uint8_t flags = 0x01;
+  static uint8_t temp = 0x00;
   if (msg.fire) {
-    flags |= 0x02;   // STM 기준 CMD_SHOOT = bit 1
+    temp |= 0x02;   // STM 기준 CMD_SHOOT = bit 1
+  } else if (msg.manual) {
+    temp = 0x00;
   }
+
   if (msg.reload) {
     flags |= 0x04;   // 임시로 STOP에 매핑하거나, 별도 정의 필요
   }
+  flags |= temp;
 
   frame.push_back(flags);
 
@@ -116,7 +121,7 @@ bool BridgeNode::writeSerialFrame(const custom_msgs::msg::ControlMsg &msg) {
 
   // custom_msgs::msg::JointMsg msg_;
   // joint_pub_->publish(msg_);
-
+  
   return writeFrameToSerial(last_write_frame_);
 }
 

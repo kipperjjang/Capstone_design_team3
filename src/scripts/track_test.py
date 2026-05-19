@@ -22,6 +22,7 @@ class TrackTest(Node):
     self.declare_parameter('window_name', 'track_test')
     self.declare_parameter('fallback_width', 480)
     self.declare_parameter('fallback_height', 640)
+    self.declare_parameter('view_scale', 1.0)
     self.declare_parameter('history_size', 120)
     self.declare_parameter('draw_rate_hz', 60.0)
     self.declare_parameter('stale_timeout_sec', 0.5)
@@ -34,6 +35,7 @@ class TrackTest(Node):
     self.window_name = self.get_parameter('window_name').value
     self.fallback_width = int(self.get_parameter('fallback_width').value)
     self.fallback_height = int(self.get_parameter('fallback_height').value)
+    self.view_scale = float(self.get_parameter('view_scale').value)
     self.history_size = max(2, int(self.get_parameter('history_size').value))
     self.draw_rate_hz = float(self.get_parameter('draw_rate_hz').value)
     self.stale_timeout_sec = float(self.get_parameter('stale_timeout_sec').value)
@@ -107,7 +109,7 @@ class TrackTest(Node):
       previous = current
 
   def pointToPixel(self, point):
-    return int(round(point[0])), int(round(point[1]))
+    return int(self.view_scale * round(point[0])), int(self.view_scale * round(point[1]))
 
   def drawPoint(self, image, point, color, label, offset):
     pixel = self.pointToPixel(point)
@@ -241,6 +243,13 @@ class TrackTest(Node):
 
   def draw(self):
     image = self.makeCanvas()
+    image = cv2.resize(
+        image,
+        None,
+        fx=self.view_scale,
+        fy=self.view_scale,
+        interpolation=cv2.INTER_AREA
+    )
     self.drawYolo(image)
     self.drawEstimate(image)
     self.drawStatus(image)

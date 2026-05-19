@@ -1,17 +1,24 @@
 #include "controller/controller.hpp"
 
+#include <cmath>
 #include <iostream>
+#include <string>
 
 namespace {
-Eigen::Vector2d computeBellAngle(const RobotState &state, const Eigen::Vector2d &img_center) {
-  const Eigen::Vector2d vec = state.p - img_center;
-  const double p = vec(0);
-  const double q = vec(1);
+Eigen::Vector2d computeBellAngle(
+    const RobotState &state,
+    const ControlConfig &config,
+    const std::string &camera_name) {
+  const CameraCalibration &calibration = config.calibration(camera_name);
+  const double center_x = calibration.cx;
+  const double center_y = calibration.cy;
+  const double p = (state.p(0) - center_x) / calibration.fx;
+  const double q = (state.p(1) - center_y) / calibration.fy;
   const double c1 = std::cos(state.joint(0));
   const double s1 = std::sin(state.joint(0));
   const double c2 = std::cos(state.joint(1));
   const double s2 = std::sin(state.joint(1));
-  const double f = 1360.0;
+  const double f = 1.0;
   
   // Compute yaw and pitch angle of the bell with respect to the base frame
   const double alpha = std::atan2(-p*c1 - q*s1*s2 + f*s1*c2, p*s1 - q*c1*s2+f*c1*c2);
@@ -36,7 +43,7 @@ Eigen::Vector2d computeBellAngle(const RobotState &state, const Eigen::Vector2d 
 
 void Controller::run(const RobotState &state) {
   state_ = state;
-  const Eigen::Vector2d img_center = state.img_center;// + Eigen::Vector2d(0.0, 150.0);
+  const Eigen::Vector2d img_center = state.img_center + config_.img_offset;
   // Update FSM State
   fsm_.update(state_);
 
@@ -51,10 +58,12 @@ void Controller::run(const RobotState &state) {
     case FSMState::TRACK: {
       // Compute desired angle
       Eigen::Vector2d u = config_.Kp * (img_center - state.p) - config_.Kd * state.v;
-      // Eigen::Vector2d u = computeBellAngle(state, img_center);
       u = (M_PI / 180.0) * u;
-      // std::cout << computeBellAngle(state, img_center).transpose() << std::endl;
-      std::cout << u.transpose() << std::endl;
+
+      // Eigen::Vector2d u = computeBellAngle(state, config_, "picam") + Eigen::Vector2d(0.0, 0.4);
+      
+      // std::cout << state.camera << " " << u.transpose() << std::endl;
+      // std::cout << u.transpose() << std::endl;
       u_.update(u, false, false);
       break;
     }

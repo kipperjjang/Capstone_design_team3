@@ -3,9 +3,37 @@ vision:
   target_class:           1
   confidence:             0.2
 
+# Camera calibration parameters for each camera.
+# Replace each camera's values with the output from scripts/camera_calibration.py.
+# camera_matrix is row-major:
+#   [fx, 0, cx,
+#    0, fy, cy,
+#    0, 0, 1]
+calibration:
+  webcam:
+    image_width:            1920
+    image_height:           1080
+    camera_matrix:          [1415.0687213366577, 0.0, 928.2711287894646,
+                            0.0, 1406.963068481548, 549.201820125296,
+                            0.0, 0.0, 1.0]
+    distortion_coefficients: [0.03797187225804043, -0.2629773190352795,
+                              0.0012574282435866575, -0.009789508057194668,
+                              0.3182199709459531]
+  picam:
+    image_width:            1280
+    image_height:           720
+    camera_matrix:          [ 5.2860734404306486e+03, 0., 1.0141619281989252e+03, 0.,
+       5.2720202214906349e+03, 6.9400786761027268e+02, 0., 0., 1. ]
+    distortion_coefficients: [ -1.3395954264596593e-01, -2.4457443749555594e+00,
+       2.2361779724188770e-03, -3.4733781319145423e-03,
+       5.0367604434873314e+01 ]
+
+
+
 # Controller parameters 
 controller:
-  Kp:                     [0.015 , 0.05]
+  image_offset:           [15.0, 175.0]
+  Kp:                     [0.015 , -0.01] 
   Kd:                     [-0.000, -0.00]
   
   frequency:              50        # Frequency of the control node
@@ -18,7 +46,7 @@ controller:
 
 # Estimator parameters 
 estimator:
-  prediction_time:        0.15
+  prediction_time:        0.1
 
   camera:
     focal_length:         0.01

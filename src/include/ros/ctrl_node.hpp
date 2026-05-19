@@ -27,6 +27,8 @@ private:
 
   // ROS
   rclcpp::Subscription<custom_msgs::msg::VisionMsg>::SharedPtr vision_sub_;
+  rclcpp::Subscription<custom_msgs::msg::VisionMsg>::SharedPtr vision_webcam_sub_;
+  rclcpp::Subscription<custom_msgs::msg::VisionMsg>::SharedPtr vision_picam_sub_;
   rclcpp::Subscription<custom_msgs::msg::JointMsg>::SharedPtr joint_sub_;
   rclcpp::Publisher<custom_msgs::msg::ControlMsg>::SharedPtr ctrl_pub_;
   rclcpp::Publisher<custom_msgs::msg::TestDebug>::SharedPtr debug_pub_;

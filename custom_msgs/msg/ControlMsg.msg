@@ -7,3 +7,6 @@ float32 u_pitch
 # Control input for shooting and reloading
 bool fire
 bool reload
+
+# Is manual message
+bool manual

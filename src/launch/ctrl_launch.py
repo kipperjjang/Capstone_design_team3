@@ -37,14 +37,33 @@ def generate_launch_description():
     ],
   )
 
-  # Vison Node
-  vision_node = Node(
+  # Webcam Vision Node - enable later when testing both cameras.
+  # vision_webcam_node = Node(
+  #   package = 'capstone',
+  #   executable = 'vision.py',
+  #   name = 'vision_webcam_node',
+  #   output = 'screen',
+  #   parameters = [
+  #     {'config_path':      config_path},
+  #     {'camera':           'webcam'},
+  #     {'camera_type':      1},
+  #     {'vision_topic':     '/vision_webcam'},
+  #     {'image_topic':      '/vision_webcam/image'},
+  #   ],
+  # )
+
+  # Pi Camera Vision Node
+  vision_picam_node = Node(
     package = 'capstone',
     executable = 'vision.py',
-    name = 'vision_node',
+    name = 'vision_picam_node',
     output = 'screen',
     parameters = [
       {'config_path':      config_path},
+      {'camera':           'picam'},
+      {'camera_type':      0},
+      {'vision_topic':     '/vision_picam'},
+      {'image_topic':      '/vision_picam/image'},
     ],
   )
 
@@ -56,8 +75,10 @@ def generate_launch_description():
     output = 'screen',
     parameters = [
       {'config_path':      config_path},
+      {'vision_topic':     '/vision_picam'},
+      {'image_topic':      '/vision_picam/image'},
     ],
   )
 
-  # return LaunchDescription([bridge_node, ctrl_node, vision_node])
-  return LaunchDescription([bridge_node, ctrl_node, vision_node, test_node])
+  # return LaunchDescription([bridge_node, ctrl_node, vision_webcam_node, vision_picam_node, test_node])
+  return LaunchDescription([bridge_node, ctrl_node, vision_picam_node, test_node])

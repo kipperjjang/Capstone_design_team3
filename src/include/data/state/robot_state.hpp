@@ -2,6 +2,8 @@
 
 #include <Eigen/Dense>
 
+#include <string>
+
 #include "custom_msgs/msg/vision_msg.hpp"
 
 /* State structure */
@@ -15,6 +17,7 @@ struct RobotState {
   Eigen::Vector2d a{Eigen::Vector2d::Zero()};           // Acceleration on image
   
   Eigen::Vector2d img_center{Eigen::Vector2d::Zero()};  // Image center
+  std::string camera{"webcam"};
 
   // Yaw Pitch of the real robot (observed data)
   Eigen::Vector2d joint{Eigen::Vector2d::Zero()};       // Robot joint angle
@@ -55,7 +58,12 @@ struct RobotState {
       has_acceleration = true;
     }
 
-    img_center = Eigen::Vector2d(msg->img_center[0], msg->img_center[1]);
+    if (msg->img_center.size() >= 2) {
+      img_center = Eigen::Vector2d(msg->img_center[0], msg->img_center[1]);
+    }
+    if (!msg->camera.empty()) {
+      camera = msg->camera;
+    }
     detected = msg->detected;
     tracked = msg->tracked;
   }
