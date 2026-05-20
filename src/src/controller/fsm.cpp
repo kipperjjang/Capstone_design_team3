@@ -1,5 +1,5 @@
 #include "controller/fsm.hpp"
-
+#include <iostream>
 void FSM::update(const RobotState &state) {
   const double dt = state.dt;
   const bool has_target = state.detected || state.tracked;
@@ -15,6 +15,7 @@ void FSM::update(const RobotState &state) {
       break;
 
     case FSMState::TRACK:
+      std::cout << "dt:\t" << dt << std::endl;
       if (!has_target && dt > config_.max_time_gap) {
         fsm_state_ = FSMState::SEARCH;
       // } else if (err_p < config_.err_p_track && err_v < config_.err_v_track) {

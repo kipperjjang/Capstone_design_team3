@@ -31,26 +31,26 @@ def generate_launch_description():
     executable = 'ctrl_node',
     name = 'ctrl_node',
     output = 'screen',
-    prefix = 'xterm -e gdb -ex run --args',
+    # prefix = 'xterm -e gdb -ex run --args',
     parameters = [
       {'config_path':          config_path},
     ],
   )
 
   # Webcam Vision Node - enable later when testing both cameras.
-  # vision_webcam_node = Node(
-  #   package = 'capstone',
-  #   executable = 'vision.py',
-  #   name = 'vision_webcam_node',
-  #   output = 'screen',
-  #   parameters = [
-  #     {'config_path':      config_path},
-  #     {'camera':           'webcam'},
-  #     {'camera_type':      1},
-  #     {'vision_topic':     '/vision_webcam'},
-  #     {'image_topic':      '/vision_webcam/image'},
-  #   ],
-  # )
+  vision_webcam_node = Node(
+    package = 'capstone',
+    executable = 'vision.py',
+    name = 'vision_webcam_node',
+    output = 'screen',
+    parameters = [
+      {'config_path':      config_path},
+      {'camera':           'webcam'},
+      {'camera_type':      1},
+      {'vision_topic':     '/vision_webcam'},
+      {'image_topic':      '/vision_webcam/image'},
+    ],
+  )
 
   # Pi Camera Vision Node
   vision_picam_node = Node(
@@ -68,7 +68,7 @@ def generate_launch_description():
   )
 
   # Test Node
-  test_node = Node(
+  test_node1 = Node(
     package = 'capstone',
     executable = 'track_test.py',
     name = 'test_node',
@@ -80,5 +80,17 @@ def generate_launch_description():
     ],
   )
 
+  test_node2 = Node(
+    package = 'capstone',
+    executable = 'track_test.py',
+    name = 'test_node',
+    output = 'screen',
+    parameters = [
+      {'config_path':      config_path},
+      {'vision_topic':     '/vision_webcam'},
+      {'image_topic':      '/vision_webcam/image'},
+    ],
+  )
+
   # return LaunchDescription([bridge_node, ctrl_node, vision_webcam_node, vision_picam_node, test_node])
-  return LaunchDescription([bridge_node, ctrl_node, vision_picam_node, test_node])
+  return LaunchDescription([bridge_node, ctrl_node,  vision_picam_node, test_node1])

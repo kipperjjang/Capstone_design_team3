@@ -19,6 +19,7 @@ struct CameraCalibration {
 
 struct ControlConfig {
   Eigen::Vector2d img_offset{Eigen::Vector2d::Zero()}; 
+  Eigen::Vector2d ang_offset{Eigen::Vector2d::Zero()}; 
   Eigen::Matrix2d Kp{Eigen::Matrix2d::Zero()};
   Eigen::Matrix2d Kd{Eigen::Matrix2d::Zero()};     // PD coefficient
 

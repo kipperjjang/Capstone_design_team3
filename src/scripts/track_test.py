@@ -148,6 +148,14 @@ class TrackTest(Node):
       1,
       cv2.LINE_AA)
 
+  def drawCenterLines(self, image):
+    height, width = image.shape[:2]
+    center_x = width // 2
+    center_y = height // 2
+
+    cv2.line(image, (center_x, 0), (center_x, height - 1), (255, 0, 0), 2, cv2.LINE_AA)
+    cv2.line(image, (0, center_y), (width - 1, center_y), (255, 0, 0), 2, cv2.LINE_AA)
+
   def drawYolo(self, image):
     msg = self.latest_vision
     if msg is None or len(msg.p) < 2:
@@ -220,7 +228,7 @@ class TrackTest(Node):
     if self.latest_debug is not None and self.latest_debug.has_control:
       ctrl = self.latest_debug
       control_text = (
-        f'u=({ctrl.u_yaw:.4f}, {ctrl.u_pitch:.4f}) '
+        f'u=({(ctrl.u_yaw / np.pi * 180):.4f}, {(ctrl.u_pitch / np.pi * 180):.4f}) '
         f'fire={ctrl.fire} reload={ctrl.reload}')
       cv2.putText(
         image,
@@ -250,6 +258,11 @@ class TrackTest(Node):
         fy=self.view_scale,
         interpolation=cv2.INTER_AREA
     )
+    self.height, self.width, _ = image.shape
+
+    # print(self.width, self.height)
+
+    self.drawCenterLines(image)
     self.drawYolo(image)
     self.drawEstimate(image)
     self.drawStatus(image)

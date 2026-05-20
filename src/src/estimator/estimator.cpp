@@ -96,6 +96,6 @@ void Estimator::update(const double t) {
 }
 
 void Estimator::update(const Eigen::Vector2d &joint, const Eigen::Vector2d &joint_vel) {
-  state_.joint = 0.8*joint + 0.2*state_.joint;
-  state_.joint_vel = 0.8*joint_vel + 0.2*state_.joint_vel;
+  state_.joint = joint;
+  state_.joint_vel = joint_vel;
 }

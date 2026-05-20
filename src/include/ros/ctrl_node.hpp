@@ -41,6 +41,7 @@ private:
   RobotState last_raw_state_;
   bool has_raw_state_{false};
   
+  double last_picam_time_{0.0};
   std::unique_ptr<Estimator> estimator_;
   std::unique_ptr<Controller> controller_;
 };

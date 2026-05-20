@@ -63,12 +63,16 @@ void CtrlNode::visionCallback(const custom_msgs::msg::VisionMsg::SharedPtr msg) 
   if (msg == nullptr || msg->p.size() < 2) return;
 
   const bool has_measurement = msg->detected || msg->tracked;
-  if (!has_measurement || !first_joint_) return;
+  if (!has_measurement) return;
 
   RobotState vision_state(msg);
   last_raw_state_ = vision_state;
   has_raw_state_ = true;
   
+  // Current time
+  const double t_now = this->now().seconds();
+  vision_state.t = t_now;
+
   // Update estimator
   RobotState state;
   if (vision_state.camera == "picam") {
@@ -80,10 +84,16 @@ void CtrlNode::visionCallback(const custom_msgs::msg::VisionMsg::SharedPtr msg) 
     // Joint value update
     estimator_->update(joint_, joint_vel_);
     state = estimator_->getState(false);
+
+    // Store last picam time
+    last_picam_time_ = t_now;
   } else {
     state = vision_state;
     state.joint = joint_;
     state.joint_vel = joint_vel_;
+
+    // Store last picam time
+    state.t = last_picam_time_;
   }
 
   controller_->run(state);
@@ -100,8 +110,8 @@ void CtrlNode::timerCallback() {
   estimator_->update(t_now);
 
   // Run Controller
-  // auto state = estimator_->getState(true);
-  auto state = estimator_->getState(estimator_->config_.prediction_time);
+  auto state = estimator_->getState(true);
+  // auto state = estimator_->getState(estimator_->config_.prediction_time);
   controller_->run(state);
 
   // Publish control input to the plant

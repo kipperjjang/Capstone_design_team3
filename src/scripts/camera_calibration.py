@@ -196,12 +196,16 @@ class ChessboardCalibrator:
         f'Need at least {min_images} valid checkerboard images, '
         f'but only found {len(image_points)}.')
 
+    flags = cv2.CALIB_RATIONAL_MODEL | cv2.CALIB_THIN_PRISM_MODEL
+
     rms, camera_matrix, dist_coeffs, rvecs, tvecs = cv2.calibrateCamera(
       object_points,
       image_points,
       image_size,
       None,
-      None)
+      None,
+      flags=flags
+    )
 
     mean_error = self.reprojection_error(
       object_points,

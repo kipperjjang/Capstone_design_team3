@@ -71,8 +71,11 @@ ControlConfig ControlConfig::load(const std::string &path) {
     config.picam_calibration = loadCameraCalibration(calibration["picam"]);
   }
 
-  const auto offset = controller["image_offset"].as<std::vector<double>>(std::vector<double>{0.0, 0.0});
-  config.img_offset = Eigen::Vector2d(offset[0], offset[1]);
+  const auto img_offset = controller["image_offset"].as<std::vector<double>>(std::vector<double>{0.0, 0.0});
+  config.img_offset = Eigen::Vector2d(img_offset[0], img_offset[1]);
+
+  const auto ang_offset = controller["angle_offset"].as<std::vector<double>>(std::vector<double>{0.0, 0.0});
+  config.ang_offset = Eigen::Vector2d(ang_offset[0], ang_offset[1]);
 
   const auto kp_diag = controller["Kp"].as<std::vector<double>>(std::vector<double>{0.0, 0.0});
   config.Kp = Eigen::Vector2d(kp_diag[0], kp_diag[1]).asDiagonal();

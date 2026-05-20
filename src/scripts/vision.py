@@ -170,8 +170,8 @@ class VisionNode(Node):
     super().__init__("vision_node")
 
     self.declare_parameter("config_path", "")
-    self.declare_parameter("yolo_model_path", "/home/capstonet3/ros2_ws/src/capstone/yolo_models/robot_yolo_p4_416_combine_new/weights/best.engine")
-    # self.declare_parameter("yolo_model_path", "/home/capstonet3/ros2_ws/src/capstone/yolo_models/robot_yolo_p4_416_combine_new_scaled_0_8/weights/best.engine")
+    self.declare_parameter("yolo_model_path_picam", "/home/capstonet3/ros2_ws/src/capstone/yolo_models/robot_yolo_p4_416_combine_new/weights/best.engine")
+    self.declare_parameter("yolo_model_path_webcam", "/home/capstonet3/ros2_ws/src/capstone/yolo_models/robot_yolo_p4_416_combine_new_scaled_0_8/weights/best.engine")
     self.declare_parameter("publish_image", True)
     self.declare_parameter("max_motion_dt", 0.5)
     self.declare_parameter("camera_type", 0)  # "CSI" : 0 or "WebCAM" : 1
@@ -189,9 +189,12 @@ class VisionNode(Node):
     self.camera = self.get_parameter("camera").value
     self.vision_topic = self.get_parameter("vision_topic").value
     self.image_topic = self.get_parameter("image_topic").value
-    self.yolo_model_path = self.get_parameter("yolo_model_path").value
     if not self.camera:
       self.camera = "picam" if self.camera_type == 0 else "webcam"
+    if self.camera == "picam":
+      self.yolo_model_path = self.get_parameter("yolo_model_path_picam").value
+    else:
+      self.yolo_model_path = self.get_parameter("yolo_model_path_webcam").value
 
     # self.target_class = int(vision_config.get("target_class", 1))
     # self.confidence = float(vision_config.get("confidence", 0.2))
