@@ -95,10 +95,7 @@ void Estimator::update(const double t) {
   kf_.predict(dt, true);
 }
 
-void Estimator::update(const Eigen::Vector2d &joint, const Eigen::Vector2d &joint_vel, const double dt) {
-  if (dt <= 0.0) return;
-
-  const double sample_hz = 1.0 / dt;
-  state_.joint = lpf(joint, state_.joint, sample_hz / 10.0, dt);
-  state_.joint_vel = lpf(joint_vel, state_.joint_vel, sample_hz / 10.0, dt);
+void Estimator::update(const Eigen::Vector2d &joint, const Eigen::Vector2d &joint_vel) {
+  state_.joint = 0.8*joint + 0.2*state_.joint;
+  state_.joint_vel = 0.8*joint_vel + 0.2*state_.joint_vel;
 }

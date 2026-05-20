@@ -33,11 +33,11 @@ private:
   rclcpp::Publisher<custom_msgs::msg::ControlMsg>::SharedPtr ctrl_pub_;
   rclcpp::Publisher<custom_msgs::msg::TestDebug>::SharedPtr debug_pub_;
   rclcpp::TimerBase::SharedPtr timer_;
-  rclcpp::Time last_joint_time_;
 
   bool first_joint_{false};
   Eigen::Vector2d joint_{Eigen::Vector2d::Zero()};
   Eigen::Vector2d joint_vel_{Eigen::Vector2d::Zero()};
+
   RobotState last_raw_state_;
   bool has_raw_state_{false};
   

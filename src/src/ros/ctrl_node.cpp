@@ -52,39 +52,40 @@ CtrlNode::CtrlNode() : Node("control_node") {
 }
 
 void CtrlNode::jointCallback(const custom_msgs::msg::JointMsg::SharedPtr msg) {
-  // // Cache joint data
-  // auto now = this->now();
-  // if (first_joint_) {
-  //   last_joint_time_ = now;
-  //   first_joint_ = false;
-  // }
-  // const double dt = (now - last_joint_time_).seconds();
+  // Cache joint data
+  if (!first_joint_) first_joint_ = true;
 
-  // joint_ = toEigen(msg->joint);
-  // joint_vel_ = toEigen(msg->joint_vel);
-  // if (estimator_->isInitialized()) {
-  //   estimator_->update(joint_, joint_vel_, dt); 
-  // }
+  joint_ = toEigen(msg->joint);
+  joint_vel_ = toEigen(msg->joint_vel);
 }
 
 void CtrlNode::visionCallback(const custom_msgs::msg::VisionMsg::SharedPtr msg) {
   if (msg == nullptr || msg->p.size() < 2) return;
 
   const bool has_measurement = msg->detected || msg->tracked;
-  if (!has_measurement) return;
+  if (!has_measurement || !first_joint_) return;
 
   RobotState vision_state(msg);
   last_raw_state_ = vision_state;
   has_raw_state_ = true;
   
-  if (!estimator_->isInitialized()) {
-    estimator_->init(vision_state);
+  // Update estimator
+  RobotState state;
+  if (vision_state.camera == "picam") {
+    if (!estimator_->isInitialized()) {
+      estimator_->init(vision_state);
+    } else {
+      estimator_->update(vision_state);
+    }
+    // Joint value update
+    estimator_->update(joint_, joint_vel_);
+    state = estimator_->getState(false);
   } else {
-    estimator_->update(vision_state);
+    state = vision_state;
+    state.joint = joint_;
+    state.joint_vel = joint_vel_;
   }
 
-  // Run Controller
-  const RobotState state = estimator_->getState(false);
   controller_->run(state);
   publishControl(controller_->getControl());
   publishDebug(state, controller_->getControl(), true, false);

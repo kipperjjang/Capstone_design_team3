@@ -5,11 +5,8 @@
 #include <string>
 
 namespace {
-Eigen::Vector2d computeBellAngle(
-    const RobotState &state,
-    const ControlConfig &config,
-    const std::string &camera_name) {
-  const CameraCalibration &calibration = config.calibration(camera_name);
+Eigen::Vector2d computeBellAngle(const RobotState &state, const ControlConfig &config) {
+  const CameraCalibration &calibration = config.calibration(state.camera);
   const double center_x = calibration.cx;
   const double center_y = calibration.cy;
   const double p = (state.p(0) - center_x) / calibration.fx;
@@ -51,16 +48,22 @@ void Controller::run(const RobotState &state) {
   switch (fsm_.getFSMState()) {
     case FSMState::SEARCH: {
       // Wait; zero control input
-      u_.update(Eigen::Vector2d::Zero(), false, false);
+      Eigen::Vector2d u = Eigen::Vector2d(u_.u_yaw, u_.u_pitch);
+      if (state.camera == "webcam" && state.detected) {
+        u = computeBellAngle(state, config_) + Eigen::Vector2d(0.0, 0.4);
+      }
+      u_.update(u, false, false);
       break;
     }
 
     case FSMState::TRACK: {
       // Compute desired angle
-      Eigen::Vector2d u = config_.Kp * (img_center - state.p) - config_.Kd * state.v;
-      u = (M_PI / 180.0) * u;
-
-      // Eigen::Vector2d u = computeBellAngle(state, config_, "picam") + Eigen::Vector2d(0.0, 0.4);
+      Eigen::Vector2d u = Eigen::Vector2d(u_.u_yaw, u_.u_pitch);
+      if (state.camera == "picam") {
+        u = computeBellAngle(state, config_) + Eigen::Vector2d(0.0, 0.4);
+      }
+      // Eigen::Vector2d u = config_.Kp * (img_center - state.p) - config_.Kd * state.v;
+      // u = (M_PI / 180.0) * u;
       
       // std::cout << state.camera << " " << u.transpose() << std::endl;
       // std::cout << u.transpose() << std::endl;

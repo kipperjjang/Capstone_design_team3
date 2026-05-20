@@ -15,7 +15,7 @@ public:
 
   void update(const RobotState &state);       // Vision input
   void update(const double t);                // Process prediction
-  void update(const Eigen::Vector2d &joint, const Eigen::Vector2d &joint_vel, const double dt); // Joint update
+  void update(const Eigen::Vector2d &joint, const Eigen::Vector2d &joint_vel); // Joint update
 
   // Utils
   const RobotState& getState(bool isProcess);

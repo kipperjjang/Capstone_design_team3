@@ -3,26 +3,27 @@
 void FSM::update(const RobotState &state) {
   const double dt = state.dt;
   const bool has_target = state.detected || state.tracked;
-  const double err_p = state.p.norm();
+  const double err_p = (state.img_center - state.p).norm();
   const double err_v = state.v.norm();
+  const std::string cam = state.camera;
 
   switch (fsm_state_) {
     case FSMState::SEARCH:
-      if (has_target) {
+      if (cam == "picam" && has_target) {
         fsm_state_ = FSMState::TRACK;
       }
       break;
 
     case FSMState::TRACK:
-      // if (!has_target || dt > config_.max_time_gap) {
-      //   fsm_state_ = FSMState::SEARCH;
+      if (!has_target && dt > config_.max_time_gap) {
+        fsm_state_ = FSMState::SEARCH;
       // } else if (err_p < config_.err_p_track && err_v < config_.err_v_track) {
       //   fsm_state_ = FSMState::AIM;
-      // }
+      }
       break;
 
     case FSMState::AIM:
-      if (!has_target || dt > config_.max_time_gap) {
+      if (!has_target && dt > config_.max_time_gap) {
         fsm_state_ = FSMState::SEARCH;
       } else if (err_p < config_.err_p_fire && err_v < config_.err_v_track) {
         fsm_state_ = FSMState::RELOAD;
