@@ -39,8 +39,8 @@ calibration:
 controller:
   image_offset:           [30.0, 100.0]
   angle_offset:           [0.0, 0.0]
-  Kp:                     [0.015 , -0.01] 
-  Kd:                     [-0.000, -0.00]
+  Kp:                     [0.01 , -0.005] 
+  Kd:                     [0.000, 0.00]
   
   frequency:              50        # Frequency of the control node
   time_delay:             0.1         # Expected time delay during fire (s)
