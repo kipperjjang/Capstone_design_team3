@@ -103,41 +103,41 @@ bool CtrlNode::processPicamMeasurement(const RobotState &vision_state) {
     estimator_->update(vision_state);
   }
 
-  RobotState state = estimator_->isInitialized() ? estimator_->getState(false) : vision_state;
-  state.joint = joint_;
-  state.joint_vel = joint_vel_;
+  state_ = estimator_->isInitialized() ? estimator_->getState(false) : vision_state;
+  state_.joint = joint_;
+  state_.joint_vel = joint_vel_;
   last_picam_time_ = vision_state.t;
 
-  controller_->run(state);
-  publishControl(controller_->getControl());
-  publishDebug(state, controller_->getControl(), true, false);
+  // std::cout << "hi in cam" << std::endl;
+  // controller_->run(state);
+  // publishControl(controller_->getControl());
+  // publishDebug(state, controller_->getControl(), true, false);
   return true;
 }
 
 bool CtrlNode::processWebcamMeasurement(const RobotState &vision_state) {
   if (!hasTarget(vision_state)) return false;
 
-  RobotState state = vision_state;
-  state.joint = joint_;
-  state.joint_vel = joint_vel_;
+  state_ = vision_state;
+  state_.joint = joint_;
+  state_.joint_vel = joint_vel_;
   if (last_picam_time_ > 0.0) {
-    state.dt = vision_state.t - last_picam_time_;
+    state_.dt = vision_state.t - last_picam_time_;
   }
 
-  last_raw_state_ = state;
+  last_raw_state_ = state_;
   has_raw_state_ = true;
 
-  controller_->run(state);
-  publishControl(controller_->getControl());
-  publishDebug(state, controller_->getControl(), true, false);
+  // controller_->run(state_);
+  // publishControl(controller_->getControl());
+  // publishDebug(state, controller_->getControl(), true, false);
   return true;
 }
 
 void CtrlNode::timerCallback() {
   const double t_now = this->now().seconds();
-  const bool has_recent_picam_target =
-      last_picam_time_ > 0.0 && t_now - last_picam_time_ <= estimator_->config_.max_time_gap;
-  publishWebcamEnabled(!(last_picam_time_ > 0.0 && t_now - last_picam_time_ <= webcam_pause_hold_sec_));
+  const bool has_recent_picam_target = last_picam_time_ > 0.0 && t_now - last_picam_time_ <= controller_->config_.ctrl_max_time_gap;
+  publishWebcamEnabled(!has_recent_picam_target);
 
   bool ran_controller = false;
   if (has_latest_picam_state_ && latest_picam_receive_time_ > last_processed_picam_receive_time_) {
@@ -148,13 +148,14 @@ void CtrlNode::timerCallback() {
   if (!ran_controller && estimator_->isInitialized()) {
     estimator_->update(t_now);
     if (estimator_->isInitialized()) {
-      auto state = estimator_->getState(true);
-      state.joint = joint_;
-      state.joint_vel = joint_vel_;
-      controller_->run(state);
-      publishControl(controller_->getControl());
-      publishDebug(state, controller_->getControl(), false, true);
-      ran_controller = true;
+      state_ = estimator_->getState(true);
+      state_.joint = joint_;
+      state_.joint_vel = joint_vel_;
+      // std::cout << "hi" << std::endl;
+      // controller_->run(state);
+      // publishControl(controller_->getControl());
+      // publishDebug(state, controller_->getControl(), false, true);
+      // ran_controller = true;
     }
   }
 
@@ -165,9 +166,15 @@ void CtrlNode::timerCallback() {
     ran_controller = processWebcamMeasurement(latest_webcam_state_);
   }
 
-  if (!ran_controller) {
-    publishControl(controller_->getControl());
-  }
+  // if (!ran_controller) {
+  //   publishControl(controller_->getControl());
+  // }
+
+  // std::cout << "timer callback!!" << std::endl;
+  state_.dt = t_now - last_picam_time_;
+  controller_->run(state_);
+  publishControl(controller_->getControl());
+  publishDebug(state_, controller_->getControl(), false, true);
 }
 
 void CtrlNode::publishControl(const ControlState &x) {

@@ -1,4 +1,5 @@
 #include "controller/fsm.hpp"
+#include <iostream>
 
 void FSM::update(const RobotState &state) {
   const double dt = state.dt;
@@ -10,16 +11,16 @@ void FSM::update(const RobotState &state) {
 
   switch (fsm_state_) {
     case FSMState::SEARCH:
+      // std::cout << "search" << std::endl;
       if (has_picam_target) {
         fsm_state_ = FSMState::TRACK;
       }
       break;
 
     case FSMState::TRACK:
-      if (!has_picam_target && dt > config_.max_time_gap) {
+      // std::cout << dt << std::endl;
+      if (!has_picam_target && dt > config_.ctrl_max_time_gap) {
         fsm_state_ = FSMState::SEARCH;
-      // } else if (err_p < config_.err_p_track && err_v < config_.err_v_track) {
-      //   fsm_state_ = FSMState::AIM;
       }
       break;
 
@@ -38,6 +39,7 @@ void FSM::update(const RobotState &state) {
       break;
 
     default:
+      std::cout << "search" << std::endl;
       fsm_state_ = FSMState::SEARCH;
       break;
   }

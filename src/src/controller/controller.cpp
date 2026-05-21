@@ -110,9 +110,11 @@ void Controller::run(const RobotState &state) {
       Eigen::Vector2d u = Eigen::Vector2d::Zero();
       if (state.camera == "webcam" && state.detected) {
         u = computeBellAngle(state, config_);
+        u(1) = u(1) / 2;
         u_.update(u, false, false, false);
+      } else if (state.camera == "picam" && !state.detected) {
+        u_.update(u, true, false, false);
       }
-      u_.update(u, true, false, false);
       break;
     }
 
@@ -122,8 +124,11 @@ void Controller::run(const RobotState &state) {
       // if (state.camera == "picam") {
       //   u = computeBellAngle(state, config_) + config_.ang_offset;
       // }
-      Eigen::Vector2d u = config_.Kp * (img_center - state.p) - config_.Kd * state.v;
-      u = (M_PI / 180.0) * u;
+      Eigen::Vector2d u = Eigen::Vector2d::Zero();
+      if (state.camera == "picam" && state.detected) {
+        u = config_.Kp * (img_center - state.p) - config_.Kd * state.v;
+        u = (M_PI / 180.0) * u;
+      }
       
       // std::cout << state.camera << " " << u.transpose() << std::endl;
       // std::cout << u.transpose() << std::endl;

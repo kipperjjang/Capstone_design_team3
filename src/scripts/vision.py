@@ -359,7 +359,7 @@ class VisionNode(Node):
     msg = VisionMsg()
     msg.header.stamp = stamp
     msg.detected = self.is_detected
-    msg.tracked = self.has_velocity
+    msg.tracked = False
     msg.p = self.position.tolist()
     msg.v = self.velocity.tolist() if self.has_velocity else []
     msg.a = self.acceleration.tolist() if self.has_acceleration else []

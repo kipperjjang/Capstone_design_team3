@@ -30,6 +30,8 @@ struct ControlConfig {
   double time_delay{0.0};     // Expected time delay during fire
   double max_time_gap{0.15};  // Maximum time gap between vision message
 
+  double ctrl_max_time_gap{1.0};  // Maximum time gap between ctrl
+
   double err_p_track{0.0};    // Error threshold for tracking, position
   double err_v_track{0.0};    // Error threshold for tracking, velocity
   double err_p_fire{0.0};     // Error threshold for aim, position

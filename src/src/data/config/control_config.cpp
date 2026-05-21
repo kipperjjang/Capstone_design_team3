@@ -86,6 +86,7 @@ ControlConfig ControlConfig::load(const std::string &path) {
   config.hz = controller["frequency"].as<double>(config.hz);
   config.time_delay = controller["time_delay"].as<double>(config.time_delay);
   config.max_time_gap = controller["max_time_gap"].as<double>(config.max_time_gap);
+  config.ctrl_max_time_gap = controller["ctrl_max_time_gap"].as<double>(config.ctrl_max_time_gap);
   config.err_p_track = controller["err_p_track"].as<double>(config.err_p_track);
   config.err_v_track = controller["err_v_track"].as<double>(config.err_v_track);
   config.err_p_fire = controller["err_p_fire"].as<double>(config.err_p_fire);

@@ -44,6 +44,7 @@ private:
   Eigen::Vector2d joint_{Eigen::Vector2d::Zero()};
   Eigen::Vector2d joint_vel_{Eigen::Vector2d::Zero()};
 
+  RobotState state_;
   RobotState last_raw_state_;
   bool has_raw_state_{false};
 

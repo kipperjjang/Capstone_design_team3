@@ -12,11 +12,11 @@ public:
   void run(const RobotState &state);
   const ControlState& getControl() const { return u_; }
 
-private:
-  FSM fsm_;
-
   // Controller configuration
   ControlConfig config_;
+  
+private:
+  FSM fsm_;
 
   // State
   RobotState state_;
