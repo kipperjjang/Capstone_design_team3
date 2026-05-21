@@ -7,6 +7,16 @@ from launch_ros.parameter_descriptions import ParameterValue
 from ament_index_python.packages import get_package_share_directory
 import os
 
+import subprocess
+
+# result = subprocess.run(
+#   ["sudo", "-S", "chmod", "666", "/dev/ttyACM0"],
+#   input="capstonet3",
+#   capture_output=True,  
+#   text=True
+# )
+
+
 def generate_launch_description():
   # Directory for the package
   pkg_dir = get_package_share_directory('capstone')

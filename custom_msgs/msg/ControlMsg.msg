@@ -10,3 +10,6 @@ bool reload
 
 # Is manual message
 bool manual
+
+# Is Pixel
+bool ispixel

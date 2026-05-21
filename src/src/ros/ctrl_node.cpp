@@ -178,6 +178,7 @@ void CtrlNode::publishControl(const ControlState &x) {
   msg.fire = x.fire;
   msg.reload = x.reload;
   msg.manual = false;
+  msg.ispixel = x.isPixel;
   ctrl_pub_->publish(msg);
 }
 

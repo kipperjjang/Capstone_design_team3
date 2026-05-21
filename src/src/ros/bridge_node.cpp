@@ -63,18 +63,19 @@ std::vector<uint8_t> makeControlFrame(
   // appendBytes(frame, &msg.u_yaw_dot, sizeof(msg.u_yaw_dot));
   // appendBytes(frame, &msg.u_pitch_dot, sizeof(msg.u_pitch_dot));
 
-  uint8_t flags = 0x01;
-  static uint8_t temp = 0x00;
+  uint8_t flags = 0x00;
+  // Pixel, angle
+  if (!msg.ispixel) {
+    flags |= 0x01;
+  }
+
   if (msg.fire) {
-    temp |= 0x02;   // STM 기준 CMD_SHOOT = bit 1
-  } else if (msg.manual) {
-    temp = 0x00;
+    flags |= 0x02;   // STM 기준 CMD_SHOOT = bit 1
   }
 
   if (msg.reload) {
     flags |= 0x04;   // 임시로 STOP에 매핑하거나, 별도 정의 필요
   }
-  flags |= temp;
 
   frame.push_back(flags);
 

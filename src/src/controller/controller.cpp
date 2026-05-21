@@ -98,7 +98,7 @@ Eigen::Vector2d computeBellAngle(const RobotState &state, const ControlConfig &c
 
 void Controller::run(const RobotState &state) {
   state_ = state;
-  // const Eigen::Vector2d img_center = state.img_center + config_.img_offset;
+  const Eigen::Vector2d img_center = state.img_center + config_.img_offset;
   // Update FSM State
   fsm_.update(state_);
 
@@ -107,26 +107,27 @@ void Controller::run(const RobotState &state) {
   switch (fsm_.getFSMState()) {
     case FSMState::SEARCH: {
       // Wait; zero control input
-      Eigen::Vector2d u = Eigen::Vector2d(u_.u_yaw, u_.u_pitch);
+      Eigen::Vector2d u = Eigen::Vector2d::Zero();
       if (state.camera == "webcam" && state.detected) {
         u = computeBellAngle(state, config_);
+        u_.update(u, false, false, false);
       }
-      u_.update(u, false, false);
+      u_.update(u, true, false, false);
       break;
     }
 
     case FSMState::TRACK: {
       // Compute desired angle
-      Eigen::Vector2d u = Eigen::Vector2d(u_.u_yaw, u_.u_pitch);
-      if (state.camera == "picam") {
-        u = computeBellAngle(state, config_) + config_.ang_offset;
-      }
-      // Eigen::Vector2d u = config_.Kp * (img_center - state.p) - config_.Kd * state.v;
-      // u = (M_PI / 180.0) * u;
+      // Eigen::Vector2d u = Eigen::Vector2d(u_.u_yaw, u_.u_pitch);
+      // if (state.camera == "picam") {
+      //   u = computeBellAngle(state, config_) + config_.ang_offset;
+      // }
+      Eigen::Vector2d u = config_.Kp * (img_center - state.p) - config_.Kd * state.v;
+      u = (M_PI / 180.0) * u;
       
       // std::cout << state.camera << " " << u.transpose() << std::endl;
       // std::cout << u.transpose() << std::endl;
-      u_.update(u, false, false);
+      u_.update(u, true, false, false);
       break;
     }
 
@@ -142,17 +143,17 @@ void Controller::run(const RobotState &state) {
       Eigen::Vector2d u = -config_.Kp * p_aim - config_.Kd * state.v;
       // Shooting condition
       const bool fire = (p_pred).norm() < config_.err_p_fire && state_.v.norm() < config_.err_v_track;
-      u_.update(u, fire, false);
+      u_.update(u, true, fire, false);
       break;
     }
 
     case FSMState::RELOAD: {
-      u_.update(Eigen::Vector2d::Zero(), false, true);
+      u_.update(Eigen::Vector2d::Zero(), false, false, true);
       break;
     }
 
     default: {
-      u_.update(Eigen::Vector2d::Zero(), false, false);
+      u_.update(Eigen::Vector2d::Zero(), false, false, false);
       break;
     }
   }
