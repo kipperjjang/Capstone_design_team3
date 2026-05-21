@@ -12,6 +12,7 @@ from ultralytics import YOLO
 
 from custom_msgs.msg import VisionMsg
 from sensor_msgs.msg import Image
+from std_msgs.msg import Bool
 
 # from trajectory_utils import load_runtime_config
 
@@ -172,12 +173,13 @@ class VisionNode(Node):
     self.declare_parameter("config_path", "")
     self.declare_parameter("yolo_model_path_picam", "/home/capstonet3/ros2_ws/src/capstone/yolo_models/robot_yolo_p4_416_combine_new/weights/best.engine")
     self.declare_parameter("yolo_model_path_webcam", "/home/capstonet3/ros2_ws/src/capstone/yolo_models/robot_yolo_p4_416_combine_new_scaled_0_8/weights/best.engine")
-    self.declare_parameter("publish_image", True)
+    self.declare_parameter("publish_image", False)
     self.declare_parameter("max_motion_dt", 0.5)
     self.declare_parameter("camera_type", 0)  # "CSI" : 0 or "WebCAM" : 1
     self.declare_parameter("camera", "")
     self.declare_parameter("vision_topic", "/vision")
     self.declare_parameter("image_topic", "/vision/image")
+    self.declare_parameter("enabled_topic", "/vision_webcam/enabled")
 
     self.config_path = self.get_parameter("config_path").value
     # self.config = load_runtime_config(self.config_path)
@@ -189,6 +191,7 @@ class VisionNode(Node):
     self.camera = self.get_parameter("camera").value
     self.vision_topic = self.get_parameter("vision_topic").value
     self.image_topic = self.get_parameter("image_topic").value
+    self.enabled_topic = self.get_parameter("enabled_topic").value
     if not self.camera:
       self.camera = "picam" if self.camera_type == 0 else "webcam"
     if self.camera == "picam":
@@ -211,6 +214,7 @@ class VisionNode(Node):
     self.prev_velocity = None
     self.prev_sample_time = None
     self.is_detected = False
+    self.enabled = True
 
     self.img = None
     self.img_height = None
@@ -234,8 +238,20 @@ class VisionNode(Node):
 
     self.reader.start()
 
-    self.state_pub = self.create_publisher(VisionMsg, self.vision_topic, 10)
-    self.image_pub = self.create_publisher(Image, self.image_topic, 10) if self.publish_image else None
+    self.state_pub = self.create_publisher(VisionMsg, self.vision_topic, 1)
+    self.image_pub = self.create_publisher(Image, self.image_topic, 1) if self.publish_image else None
+    self.enabled_sub = None
+    if self.camera == "webcam":
+      self.enabled_sub = self.create_subscription(Bool, self.enabled_topic, self.enabledCallback, 1)
+
+  def enabledCallback(self, msg):
+    if msg is None:
+      return
+    was_enabled = self.enabled
+    self.enabled = bool(msg.data)
+    if was_enabled and not self.enabled:
+      self.is_detected = False
+      self.reset_motion_estimate()
 
   def read_img(self):
     if self.camera_type == 0:
@@ -278,7 +294,6 @@ class VisionNode(Node):
     )
 
     if not results:
-      print("NN FAILED")
       return
 
     boxes = results[0].boxes
@@ -368,6 +383,9 @@ class VisionNode(Node):
     try:
       while rclpy.ok():
         if not self.read_img():
+          executor.spin_once(timeout_sec=0.0)
+          continue
+        if not self.enabled:
           executor.spin_once(timeout_sec=0.0)
           continue
         self.detect_bell()

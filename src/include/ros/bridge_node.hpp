@@ -17,7 +17,8 @@ public:
 private:
   // Callback function
   void controlCallback(const custom_msgs::msg::ControlMsg::SharedPtr msg);
-  void timerCallback();
+  void readTimerCallback();
+  void writeTimerCallback();
   
   // Utils
   bool writeSerialFrame(const custom_msgs::msg::ControlMsg &msg);
@@ -28,7 +29,11 @@ private:
   // ROS
   rclcpp::Subscription<custom_msgs::msg::ControlMsg>::SharedPtr control_sub_;
   rclcpp::Publisher<custom_msgs::msg::JointMsg>::SharedPtr joint_pub_;
-  rclcpp::TimerBase::SharedPtr watchdog_timer_;
+  rclcpp::TimerBase::SharedPtr read_timer_;
+  rclcpp::TimerBase::SharedPtr write_timer_;
+
+  custom_msgs::msg::ControlMsg latest_control_;
+  bool has_latest_control_{false};
 
   // Serial
   std::unique_ptr<Serial> serial_;

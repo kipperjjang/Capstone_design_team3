@@ -79,3 +79,4 @@ bridge:
     stop_bits:            1
     parity:               0
     watchdog_frequency:   200
+    write_frequency:      50

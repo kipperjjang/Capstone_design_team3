@@ -97,31 +97,38 @@ BridgeNode::BridgeNode() : Node("bridge_node") {
   // serial_ = std::make_unique<Serial>(port_config, true);
   serial_ = std::make_unique<Serial>(port_config, false);
 
-  control_sub_ = this->create_subscription<custom_msgs::msg::ControlMsg>("/control", 10, std::bind(&BridgeNode::controlCallback, this, _1));
-  joint_pub_ = this->create_publisher<custom_msgs::msg::JointMsg>("/joint", 10);
+  const auto qos_latest = rclcpp::QoS(rclcpp::KeepLast(1));
+  control_sub_ = this->create_subscription<custom_msgs::msg::ControlMsg>("/control", qos_latest, std::bind(&BridgeNode::controlCallback, this, _1));
+  joint_pub_ = this->create_publisher<custom_msgs::msg::JointMsg>("/joint", qos_latest);
 
-  const int period_ms = std::max(1, static_cast<int>(1000.0 / port_config.watchdog_frequency));
-  watchdog_timer_ = this->create_wall_timer(std::chrono::milliseconds(period_ms), std::bind(&BridgeNode::timerCallback, this));
+  const int read_period_ms = std::max(1, static_cast<int>(1000.0 / port_config.watchdog_frequency));
+  read_timer_ = this->create_wall_timer(std::chrono::milliseconds(read_period_ms), std::bind(&BridgeNode::readTimerCallback, this));
+  const int write_period_ms = std::max(1, static_cast<int>(1000.0 / port_config.write_frequency));
+  write_timer_ = this->create_wall_timer(std::chrono::milliseconds(write_period_ms), std::bind(&BridgeNode::writeTimerCallback, this));
   buffer_.reserve(1024);
 }
 
 void BridgeNode::controlCallback(const custom_msgs::msg::ControlMsg::SharedPtr msg) {
   if (msg == nullptr) return;
 
-  (void)writeSerialFrame(*msg);
+  latest_control_ = *msg;
+  has_latest_control_ = true;
 }
 
-void BridgeNode::timerCallback() {
+void BridgeNode::readTimerCallback() {
   (void)readSerialFrame();
+}
+
+void BridgeNode::writeTimerCallback() {
+  if (!has_latest_control_) return;
+
+  (void)writeSerialFrame(latest_control_);
 }
 
 bool BridgeNode::writeSerialFrame(const custom_msgs::msg::ControlMsg &msg) {
   last_write_frame_ = makeControlFrame(msg, previous_read_status_, write_seq_);
   ++write_seq_;
 
-  // custom_msgs::msg::JointMsg msg_;
-  // joint_pub_->publish(msg_);
-  
   return writeFrameToSerial(last_write_frame_);
 }
 

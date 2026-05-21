@@ -16,5 +16,6 @@ struct PortConfig {
   }
 
   double watchdog_frequency{1000.0};
+  double write_frequency{50.0};
   static PortConfig load(const std::string &path);
 };

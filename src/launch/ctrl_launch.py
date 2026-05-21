@@ -1,10 +1,11 @@
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
+from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 from ament_index_python.packages import get_package_share_directory
 import os
-import yaml
 
 def generate_launch_description():
   # Directory for the package
@@ -12,6 +13,10 @@ def generate_launch_description():
   
   # Path to configuration and model files
   config_path       = os.path.join(pkg_dir, 'config', 'params.yaml')
+  enable_debug = LaunchConfiguration('enable_debug')
+  publish_image = LaunchConfiguration('publish_image')
+  enable_webcam = LaunchConfiguration('enable_webcam')
+  enable_picam = LaunchConfiguration('enable_picam')
   
   # HW-ROS bridge node
   bridge_node = Node(
@@ -34,6 +39,7 @@ def generate_launch_description():
     # prefix = 'xterm -e gdb -ex run --args',
     parameters = [
       {'config_path':          config_path},
+      {'webcam_pause_hold_sec': 0.0},
     ],
   )
 
@@ -43,12 +49,15 @@ def generate_launch_description():
     executable = 'vision.py',
     name = 'vision_webcam_node',
     output = 'screen',
+    condition = IfCondition(enable_webcam),
     parameters = [
       {'config_path':      config_path},
       {'camera':           'webcam'},
       {'camera_type':      1},
       {'vision_topic':     '/vision_webcam'},
       {'image_topic':      '/vision_webcam/image'},
+      {'enabled_topic':    '/vision_webcam/enabled'},
+      {'publish_image':    ParameterValue(publish_image, value_type=bool)},
     ],
   )
 
@@ -58,12 +67,14 @@ def generate_launch_description():
     executable = 'vision.py',
     name = 'vision_picam_node',
     output = 'screen',
+    condition = IfCondition(enable_picam),
     parameters = [
       {'config_path':      config_path},
       {'camera':           'picam'},
       {'camera_type':      0},
       {'vision_topic':     '/vision_picam'},
       {'image_topic':      '/vision_picam/image'},
+      {'publish_image':    ParameterValue(publish_image, value_type=bool)},
     ],
   )
 
@@ -71,25 +82,40 @@ def generate_launch_description():
   test_node1 = Node(
     package = 'capstone',
     executable = 'track_test.py',
-    name = 'test_node',
+    name = 'track_picam_node',
     output = 'screen',
+    condition = IfCondition(enable_debug),
     parameters = [
       {'config_path':      config_path},
       {'vision_topic':     '/vision_picam'},
       {'image_topic':      '/vision_picam/image'},
+      {'window_name':      'track_picam'},
     ],
   )
 
   test_node2 = Node(
     package = 'capstone',
     executable = 'track_test.py',
-    name = 'test_node',
+    name = 'track_webcam_node',
     output = 'screen',
+    condition = IfCondition(enable_debug),
     parameters = [
       {'config_path':      config_path},
       {'vision_topic':     '/vision_webcam'},
       {'image_topic':      '/vision_webcam/image'},
+      {'window_name':      'track_webcam'},
     ],
   )
 
-  return LaunchDescription([bridge_node, ctrl_node, vision_webcam_node, vision_picam_node, test_node1, test_node2])
+  return LaunchDescription([
+    DeclareLaunchArgument('enable_debug', default_value='false'),
+    DeclareLaunchArgument('publish_image', default_value='false'),
+    DeclareLaunchArgument('enable_webcam', default_value='true'),
+    DeclareLaunchArgument('enable_picam', default_value='true'),
+    bridge_node,
+    ctrl_node,
+    vision_webcam_node,
+    vision_picam_node,
+    test_node1,
+    test_node2,
+  ])
