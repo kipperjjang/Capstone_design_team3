@@ -47,7 +47,7 @@
 #define CPU_HZ (168000000.0f)
 
 #define ARR_TICKS   4199               // TIM1 max ARR
-#define V_BUS (24.0f)                  // input bus voltage
+#define V_BUS (14.8f)                  // input bus voltage
 #define Vd_limit (V_LIMIT * 0.9f)      // Vd limit voltage. 0.98 is safety factor
 
 #define CMD_AIM         (1 << 0)
@@ -101,11 +101,21 @@ TIM_HandleTypeDef htim1;
 	#define current_B_calibrated 2058  // board0 2058 / board1 2056
 
 	//mechanical zero position
-	uint16_t AS5048_mech_zeropos = 8040; // board0 8040 / board1 11500
+	uint16_t AS5048_mech_zeropos = 12150; // board0 8040 / board1 11500
 
 	// motor electrical angle commutation
 	uint16_t AS5048_zeropos = 12803;   // board0 12803 / board1 10768
-#else
+
+	float pos_P = 20.0f;
+	float pos_I = 50.0f;
+	float pos_D = 2.0f;
+
+	/*float pos_P = 25.0f;
+	float pos_I = 0.0f;
+	float pos_D = 2.4f;*/
+#endif
+
+#ifdef motor1
 	#define NODE_ID              1U      // board0 0 / board1 1
 
 	// ADC calibrated value (different for each board and chip)
@@ -113,10 +123,18 @@ TIM_HandleTypeDef htim1;
 	#define current_B_calibrated 2056  // board0 2058 / board1 2056
 
 	//mechanical zero position
-	uint16_t AS5048_mech_zeropos = 11500; // board0 8040 / board1 11500
+	uint16_t AS5048_mech_zeropos = 3333; // board0 8040 / board1 2550
 
 	// motor electrical angle commutation
-	uint16_t AS5048_zeropos = 10768;   // board0 12803 / board1 10768
+	uint16_t AS5048_zeropos = 3736;   // board0 12803 / board1 3736
+
+	/*float pos_P = 30.0f;
+	float pos_I = 300.0f;
+	float pos_D = 2.5f;*/
+
+	float pos_P = 20.0f;
+	float pos_I = 50.0f;
+	float pos_D = 2.0f;
 
 #endif
 
@@ -124,15 +142,19 @@ float mech_limit = PI/2;
 
 #define W_M_LPF_ALPHA     (0.002f)
 
-float pos_P = 25.0f;
-float pos_I = 1.0f;
-float pos_D = 2.4f;
+
 float P_part, I_part, D_part;
 
-#define IQ_REF_LIMIT    (0.8f)
+#define IQ_REF_LIMIT    (3.0f)
+
+#define POS_I_ENABLE_ERR      (0.5f)   // [rad]
+#define POS_I_LIMIT_RATE      (0.5f)    // 처음에는 0.5 추천
+
+volatile float pos_ref_mech_rad    = 0.0f;
 
 // P 25.0, D 2.4, alpha 0.002
 
+float pos_err, pos_err_integral;
 
 // CAN communication setting
 FDCAN_FilterTypeDef sFilter;
@@ -180,8 +202,6 @@ float Vq, Vd, V_alpha, V_beta;                                   // park
 
 uint8_t encoder_cali = 0;
 float V_mag = 1.0f, V_arg = 0.0f, V_cali_speed;
-
-volatile float pos_ref_mech_rad    = 0.0f;
 
 float all_us;
 float cali_sin, cali_cos;
@@ -262,25 +282,52 @@ static void Motor_SendStatus(uint8_t seq);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
-static inline void PositionPID_Update(void){
-	pos_ref_mech_rad = (pos_ref_mech_rad > mech_limit) ? mech_limit : (pos_ref_mech_rad < -mech_limit) ? -mech_limit : pos_ref_mech_rad;
+static inline void PositionPID_Update(void)
+{
+    pos_ref_mech_rad = clampf(pos_ref_mech_rad, -mech_limit, mech_limit);
 
-    float e = pos_ref_mech_rad - th_m_cont;
+    if (not_aim) {
+        iq_ref = 0.0f;
+        id_ref = 0.0f;
 
-    P_part = pos_P * e;
-    D_part = - pos_D * w_m;
+        pos_err = 0.0f;
+        pos_err_integral = 0.0f;
 
-    float iq_cmd = mech_flip * (P_part + D_part);
+        P_part = 0.0f;
+        I_part = 0.0f;
+        D_part = 0.0f;
 
-    iq_cmd = (iq_cmd > IQ_REF_LIMIT) ? IQ_REF_LIMIT :
-             (iq_cmd < -IQ_REF_LIMIT) ? -IQ_REF_LIMIT : iq_cmd;
-
-    iq_ref = iq_cmd;
-
-    if(not_aim){
-    	iq_ref = 0.0f;
-    	id_ref = 0.0f;
+        return;
     }
+
+    pos_err = pos_ref_mech_rad - th_m_cont;
+
+    P_part = pos_P * pos_err;
+    D_part = -pos_D * w_m;
+
+    if (pos_I > 1e-6f) {
+        if (fabsf(pos_err) < POS_I_ENABLE_ERR) {
+            pos_err_integral += pos_err * POS_CTRL_DT;
+        }
+
+        float pos_err_integral_LIMIT = POS_I_LIMIT_RATE * (IQ_REF_LIMIT / pos_I);
+
+        pos_err_integral = clampf(pos_err_integral,
+                                  -pos_err_integral_LIMIT,
+                                   pos_err_integral_LIMIT);
+
+        I_part = pos_I * pos_err_integral;
+    }
+    else {
+        pos_err_integral = 0.0f;
+        I_part = 0.0f;
+    }
+
+    float u_unsat = P_part + I_part + D_part;
+    float u_sat = clampf(u_unsat, -IQ_REF_LIMIT, IQ_REF_LIMIT);
+
+    iq_ref = u_sat;
+    id_ref = 0.0f;
 }
 
 uint32_t debug_time_start, SVPWM_end;
@@ -647,6 +694,9 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+
+	//pos_ref_mech_rad = -pos_ref_mech_rad;
+	//HAL_Delay(2000);
   }
   /* USER CODE END 3 */
 }
