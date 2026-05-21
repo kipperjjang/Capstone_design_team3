@@ -74,7 +74,7 @@ Eigen::Vector2d computeBellAngle(const RobotState &state, const ControlConfig &c
   const double s2 = std::sin(joint(1));
   const double f = 1.0;
   
-  std::cout << "joint:\t" << joint(0) << "\t" << joint(1) << std::endl;
+  // std::cout << "joint:\t" << joint(0) << "\t" << joint(1) << std::endl;
   // Compute yaw and pitch angle of the bell with respect to the base frame
   const double alpha = std::atan2(-p*c1 - q*s1*s2 + f*s1*c2, p*s1 - q*c1*s2+f*c1*c2);
   const double n = q*s2 + f*c2;
@@ -102,7 +102,7 @@ void Controller::run(const RobotState &state) {
   // Update FSM State
   fsm_.update(state_);
 
-  std::cout << state.camera << std::endl;
+  // std::cout << state.camera << std::endl;
   // Handle based on the current state
   switch (fsm_.getFSMState()) {
     case FSMState::SEARCH: {

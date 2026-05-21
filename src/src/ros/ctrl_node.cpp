@@ -27,6 +27,7 @@ CtrlNode::CtrlNode() : Node("control_node") {
   this->declare_parameter<std::string>("vision_topic", "/vision");
   this->declare_parameter<std::string>("vision_webcam_topic", "/vision_webcam");
   this->declare_parameter<std::string>("vision_picam_topic", "/vision_picam");
+  this->declare_parameter<double>("webcam_pause_hold_sec", 0.0);
   this->get_parameter("config_path", config_path);
   this->get_parameter("vision_topic", vision_topic);
   this->get_parameter("vision_webcam_topic", vision_webcam_topic);
@@ -34,18 +35,25 @@ CtrlNode::CtrlNode() : Node("control_node") {
 
   const EstimatorConfig estimator_config = EstimatorConfig::load(config_path);
   const ControlConfig controller_config = ControlConfig::load(config_path);
-  
+
   // Initilaize
   estimator_ = std::make_unique<Estimator>(estimator_config);
   controller_ = std::make_unique<Controller>(controller_config);
-  
+  this->get_parameter("webcam_pause_hold_sec", webcam_pause_hold_sec_);
+  if (webcam_pause_hold_sec_ <= 0.0) {
+    webcam_pause_hold_sec_ = estimator_config.max_time_gap;
+  }
+
   // Subscriber and Publisher
-  vision_sub_ = this->create_subscription<custom_msgs::msg::VisionMsg>(vision_topic, 1, std::bind(&CtrlNode::visionCallback, this, _1));
-  vision_webcam_sub_ = this->create_subscription<custom_msgs::msg::VisionMsg>(vision_webcam_topic, 1, std::bind(&CtrlNode::visionCallback, this, _1));
-  vision_picam_sub_ = this->create_subscription<custom_msgs::msg::VisionMsg>(vision_picam_topic, 1, std::bind(&CtrlNode::visionCallback, this, _1));
-  joint_sub_ = this->create_subscription<custom_msgs::msg::JointMsg>("/joint", 1, std::bind(&CtrlNode::jointCallback, this, _1));
-  ctrl_pub_ = this->create_publisher<custom_msgs::msg::ControlMsg>("/control", 1);
-  debug_pub_ = this->create_publisher<custom_msgs::msg::TestDebug>("/test/debug", 1);
+  const auto qos_latest = rclcpp::QoS(rclcpp::KeepLast(1));
+  vision_sub_ = this->create_subscription<custom_msgs::msg::VisionMsg>(vision_topic, qos_latest, std::bind(&CtrlNode::visionCallback, this, _1));
+  vision_webcam_sub_ = this->create_subscription<custom_msgs::msg::VisionMsg>(vision_webcam_topic, qos_latest, std::bind(&CtrlNode::visionCallback, this, _1));
+  vision_picam_sub_ = this->create_subscription<custom_msgs::msg::VisionMsg>(vision_picam_topic, qos_latest, std::bind(&CtrlNode::visionCallback, this, _1));
+  joint_sub_ = this->create_subscription<custom_msgs::msg::JointMsg>("/joint", qos_latest, std::bind(&CtrlNode::jointCallback, this, _1));
+  ctrl_pub_ = this->create_publisher<custom_msgs::msg::ControlMsg>("/control", qos_latest);
+  debug_pub_ = this->create_publisher<custom_msgs::msg::TestDebug>("/test/debug", qos_latest);
+  webcam_enabled_pub_ = this->create_publisher<std_msgs::msg::Bool>(
+      "/vision_webcam/enabled", rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable());
 
   const int period = static_cast<int>(1000.0 / controller_config.hz);
   timer_ = this->create_wall_timer(std::chrono::milliseconds(period), std::bind(&CtrlNode::timerCallback, this));
@@ -65,66 +73,101 @@ void CtrlNode::visionCallback(const custom_msgs::msg::VisionMsg::SharedPtr msg) 
 
   RobotState vision_state(msg);
   
-  // Current time
-  const double t_now = this->now().seconds();
-  vision_state.t = t_now;
+  const double receive_time = this->now().seconds();
+  vision_state.t = receive_time;
 
-  if (vision_state.camera == "webcam" && last_picam_time_ > 0.0 &&
-      t_now - last_picam_time_ <= estimator_->config_.max_time_gap) {
-    return;
+  if (vision_state.camera == "picam") {
+    latest_picam_state_ = vision_state;
+    latest_picam_receive_time_ = receive_time;
+    has_latest_picam_state_ = true;
+  } else {
+    latest_webcam_state_ = vision_state;
+    latest_webcam_receive_time_ = receive_time;
+    has_latest_webcam_state_ = true;
   }
+}
+
+bool CtrlNode::hasTarget(const RobotState &state) const {
+  return state.detected || state.tracked;
+}
+
+bool CtrlNode::processPicamMeasurement(const RobotState &vision_state) {
+  if (!hasTarget(vision_state)) return false;
 
   last_raw_state_ = vision_state;
   has_raw_state_ = true;
 
-  // Update estimator
-  RobotState state;
-  if (vision_state.camera == "picam") {
-    if (!estimator_->isInitialized()) {
-      estimator_->init(vision_state);
-    } else {
-      estimator_->update(vision_state);
-    }
-    // Joint value update
-    estimator_->update(joint_, joint_vel_);
-    state = estimator_->isInitialized() ? estimator_->getState(false) : vision_state;
-    state.joint = joint_;
-    state.joint_vel = joint_vel_;
-
-    // Store last picam time
-    if (vision_state.detected || vision_state.tracked) {
-      last_picam_time_ = t_now;
-    }
+  if (!estimator_->isInitialized()) {
+    estimator_->init(vision_state);
   } else {
-    state = vision_state;
-    state.joint = joint_;
-    state.joint_vel = joint_vel_;
-    if (last_picam_time_ > 0.0) {
-      state.dt = t_now - last_picam_time_;
-    }
+    estimator_->update(vision_state);
   }
+
+  RobotState state = estimator_->isInitialized() ? estimator_->getState(false) : vision_state;
+  state.joint = joint_;
+  state.joint_vel = joint_vel_;
+  last_picam_time_ = vision_state.t;
 
   controller_->run(state);
   publishControl(controller_->getControl());
   publishDebug(state, controller_->getControl(), true, false);
+  return true;
+}
+
+bool CtrlNode::processWebcamMeasurement(const RobotState &vision_state) {
+  if (!hasTarget(vision_state)) return false;
+
+  RobotState state = vision_state;
+  state.joint = joint_;
+  state.joint_vel = joint_vel_;
+  if (last_picam_time_ > 0.0) {
+    state.dt = vision_state.t - last_picam_time_;
+  }
+
+  last_raw_state_ = state;
+  has_raw_state_ = true;
+
+  controller_->run(state);
+  publishControl(controller_->getControl());
+  publishDebug(state, controller_->getControl(), true, false);
+  return true;
 }
 
 void CtrlNode::timerCallback() {
-  // // Update with the process model
-  if (!estimator_->isInitialized()) return;
-  
-  // Update Estimator state (predicted state)
   const double t_now = this->now().seconds();
-  estimator_->update(t_now);
+  const bool has_recent_picam_target =
+      last_picam_time_ > 0.0 && t_now - last_picam_time_ <= estimator_->config_.max_time_gap;
+  publishWebcamEnabled(!(last_picam_time_ > 0.0 && t_now - last_picam_time_ <= webcam_pause_hold_sec_));
 
-  // Run Controller
-  auto state = estimator_->getState(true);
-  // auto state = estimator_->getState(estimator_->config_.prediction_time);
-  controller_->run(state);
+  bool ran_controller = false;
+  if (has_latest_picam_state_ && latest_picam_receive_time_ > last_processed_picam_receive_time_) {
+    last_processed_picam_receive_time_ = latest_picam_receive_time_;
+    ran_controller = processPicamMeasurement(latest_picam_state_);
+  }
 
-  // Publish control input to the plant
-  publishControl(controller_->getControl());
-  publishDebug(state, controller_->getControl(), false, true);
+  if (!ran_controller && estimator_->isInitialized()) {
+    estimator_->update(t_now);
+    if (estimator_->isInitialized()) {
+      auto state = estimator_->getState(true);
+      state.joint = joint_;
+      state.joint_vel = joint_vel_;
+      controller_->run(state);
+      publishControl(controller_->getControl());
+      publishDebug(state, controller_->getControl(), false, true);
+      ran_controller = true;
+    }
+  }
+
+  if (!ran_controller && !has_recent_picam_target && has_latest_webcam_state_ &&
+      latest_webcam_receive_time_ > last_processed_webcam_receive_time_ &&
+      t_now - latest_webcam_receive_time_ <= estimator_->config_.max_time_gap) {
+    last_processed_webcam_receive_time_ = latest_webcam_receive_time_;
+    ran_controller = processWebcamMeasurement(latest_webcam_state_);
+  }
+
+  if (!ran_controller) {
+    publishControl(controller_->getControl());
+  }
 }
 
 void CtrlNode::publishControl(const ControlState &x) {
@@ -136,6 +179,12 @@ void CtrlNode::publishControl(const ControlState &x) {
   msg.reload = x.reload;
   msg.manual = false;
   ctrl_pub_->publish(msg);
+}
+
+void CtrlNode::publishWebcamEnabled(bool enabled) {
+  std_msgs::msg::Bool msg;
+  msg.data = enabled;
+  webcam_enabled_pub_->publish(msg);
 }
 
 void CtrlNode::publishDebug(const RobotState &estimated_state, const ControlState &control_state,

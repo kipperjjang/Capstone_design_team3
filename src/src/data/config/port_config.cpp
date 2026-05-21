@@ -17,6 +17,8 @@ PortConfig PortConfig::load(const std::string &path) {
 
   // Watchdog frequency; rate of bridge node
   config.watchdog_frequency = serial["watchdog_frequency"].as<double>();
+  config.write_frequency = serial["write_frequency"].as<double>(
+      file["controller"]["frequency"].as<double>(config.write_frequency));
 
   return config;
 }
