@@ -264,6 +264,7 @@ class VisionNode(Node):
   def detect_bell(self):
     self.is_detected = False
     self.position = np.zeros(2, dtype=np.float32)
+    self.box_size = np.zeros(2, dtype=np.float32)
     if self.img is None:
       return
 
@@ -366,10 +367,11 @@ class VisionNode(Node):
 
     try:
       while rclpy.ok():
-        self.read_img()
+        if not self.read_img():
+          executor.spin_once(timeout_sec=0.0)
+          continue
         self.detect_bell()
-        if self.is_detected:
-          self.publish()
+        self.publish()
         self.publishImage()
         executor.spin_once(timeout_sec=0.0)
     finally:

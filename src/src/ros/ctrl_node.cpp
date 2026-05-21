@@ -60,18 +60,22 @@ void CtrlNode::jointCallback(const custom_msgs::msg::JointMsg::SharedPtr msg) {
 }
 
 void CtrlNode::visionCallback(const custom_msgs::msg::VisionMsg::SharedPtr msg) {
-  if (msg == nullptr || msg->p.size() < 2) return;
-
-  const bool has_measurement = msg->detected || msg->tracked;
-  if (!has_measurement) return;
+  if (msg == nullptr) return;
+  if ((msg->detected || msg->tracked) && msg->p.size() < 2) return;
 
   RobotState vision_state(msg);
-  last_raw_state_ = vision_state;
-  has_raw_state_ = true;
   
   // Current time
   const double t_now = this->now().seconds();
   vision_state.t = t_now;
+
+  if (vision_state.camera == "webcam" && last_picam_time_ > 0.0 &&
+      t_now - last_picam_time_ <= estimator_->config_.max_time_gap) {
+    return;
+  }
+
+  last_raw_state_ = vision_state;
+  has_raw_state_ = true;
 
   // Update estimator
   RobotState state;
@@ -83,17 +87,21 @@ void CtrlNode::visionCallback(const custom_msgs::msg::VisionMsg::SharedPtr msg) 
     }
     // Joint value update
     estimator_->update(joint_, joint_vel_);
-    state = estimator_->getState(false);
-
-    // Store last picam time
-    last_picam_time_ = t_now;
-  } else {
-    state = vision_state;
+    state = estimator_->isInitialized() ? estimator_->getState(false) : vision_state;
     state.joint = joint_;
     state.joint_vel = joint_vel_;
 
     // Store last picam time
-    state.t = last_picam_time_;
+    if (vision_state.detected || vision_state.tracked) {
+      last_picam_time_ = t_now;
+    }
+  } else {
+    state = vision_state;
+    state.joint = joint_;
+    state.joint_vel = joint_vel_;
+    if (last_picam_time_ > 0.0) {
+      state.dt = t_now - last_picam_time_;
+    }
   }
 
   controller_->run(state);

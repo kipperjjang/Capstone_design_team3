@@ -92,5 +92,4 @@ def generate_launch_description():
     ],
   )
 
-  # return LaunchDescription([bridge_node, ctrl_node, vision_webcam_node, vision_picam_node, test_node])
-  return LaunchDescription([bridge_node, ctrl_node,  vision_picam_node, test_node1])
+  return LaunchDescription([bridge_node, ctrl_node, vision_webcam_node, vision_picam_node, test_node1, test_node2])

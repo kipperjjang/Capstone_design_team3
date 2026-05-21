@@ -22,7 +22,7 @@ class TrackTest(Node):
     self.declare_parameter('window_name', 'track_test')
     self.declare_parameter('fallback_width', 480)
     self.declare_parameter('fallback_height', 640)
-    self.declare_parameter('view_scale', 1.0)
+    self.declare_parameter('view_scale', 0.6)
     self.declare_parameter('history_size', 120)
     self.declare_parameter('draw_rate_hz', 60.0)
     self.declare_parameter('stale_timeout_sec', 0.5)

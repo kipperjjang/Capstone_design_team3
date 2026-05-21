@@ -51,7 +51,7 @@ Eigen::Vector2d pixelToUndistortedRay(const Eigen::Vector2d &pixel, const Camera
     const double delta_y = p1*(r2 + 2.0*y2) + 2.0*p2*xy + s3*r2 + s4*r4;
 
     x = (xd - delta_x) / radial;
-    y = (yd - delta_x) / radial;
+    y = (yd - delta_y) / radial;
   }
 
   return Eigen::Vector2d(x, y);
@@ -59,15 +59,15 @@ Eigen::Vector2d pixelToUndistortedRay(const Eigen::Vector2d &pixel, const Camera
 
 Eigen::Vector2d computeBellAngle(const RobotState &state, const ControlConfig &config) {
   const CameraCalibration &calibration = config.calibration(state.camera);
-  const double center_x = calibration.cx;
-  const double center_y = calibration.cy;
-  const double p = (state.p(0) - center_x) / calibration.fx;
-  const double q = (state.p(1) - center_y) / calibration.fy;
+  // const double center_x = calibration.cx;
+  // const double center_y = calibration.cy;
+  // const double p = (state.p(0) - center_x) / calibration.fx;
+  // const double q = (state.p(1) - center_y) / calibration.fy;
   
-  Eigen::Vector2d joint = state.camera == "picam" ? state.joint : Eigen::Vector2d(0.0, 0.4);
-  // const Eigen::Vector2d ray = pixelToUndistortedRay(state.p, calibration);
-  // const double p = ray.x();
-  // const double q = ray.y();
+  Eigen::Vector2d joint = state.camera == "picam" ? state.joint : Eigen::Vector2d(0.0, 0.0);
+  const Eigen::Vector2d ray = pixelToUndistortedRay(state.p, calibration);
+  const double p = ray.x();
+  const double q = ray.y();
   const double c1 = std::cos(joint(0));
   const double s1 = std::sin(joint(0));
   const double c2 = std::cos(joint(1));

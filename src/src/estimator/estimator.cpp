@@ -84,6 +84,8 @@ void Estimator::update(const double t) {
   state_.process = true;
   state_.dt = dt;
   state_.t = t;
+  state_.detected = false;
+  state_.tracked = false;
 
   // Predict state via process
   if (dt > config_.max_time_gap) {
