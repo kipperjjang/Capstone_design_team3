@@ -52,7 +52,7 @@ controller:
 
 # Estimator parameters 
 estimator:
-  prediction_time:        0.1
+  prediction_time:        0.01
 
   camera:
     focal_length:         0.01
@@ -65,7 +65,7 @@ estimator:
     p0_pos:               10.0
     p0_vel:               900
     p0_acc:               54000
-    max_time_gap:         0.5
+    max_time_gap:         0.25
   
 
 
