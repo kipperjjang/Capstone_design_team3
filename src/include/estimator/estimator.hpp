@@ -22,6 +22,8 @@ public:
   const RobotState& getState(double dt);
   bool isInitialized() const { return initialized_; }
 
+  const double getDt() { return state_.dt;}
+
   // Configuration
   EstimatorConfig config_;
   

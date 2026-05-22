@@ -39,7 +39,7 @@ calibration:
 controller:
   image_offset:           [30.0, 100.0]
   angle_offset:           [0.0, 0.0]
-  Kp:                     [0.01 , -0.005] 
+  Kp:                     [0.005 , -0.003] 
   Kd:                     [0.000, 0.00]
   
   frequency:              50        # Frequency of the control node
