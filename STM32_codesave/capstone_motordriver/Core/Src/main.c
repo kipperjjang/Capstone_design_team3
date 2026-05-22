@@ -124,15 +124,15 @@ TIM_HandleTypeDef htim1;
 	float pos_I = 300.0f;
 	float pos_D = 2.5f;*/
 
-	float pos_P = 10.0f;
-	float pos_I = 0.0f;
-	float pos_D = 1.0f;
+	float pos_P = 22.0f;
+	float pos_I = 100.0f;
+	float pos_D = 2.0f;
 
 	float W_M_LPF_ALPHA = 0.2f;
 
 	#define IQ_REF_LIMIT    (5.0f)
 
-	float POS_I_ENABLE_ERR = 0.1f;   // [rad]
+	float POS_I_ENABLE_ERR = 0.05f;   // [rad]
 	float POS_I_LIMIT_RATE = 0.5f;
 
 #endif
@@ -590,8 +590,8 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
 
-	pos_ref_mech_rad = -pos_ref_mech_rad;
-	HAL_Delay(2000);
+	//pos_ref_mech_rad = -pos_ref_mech_rad;
+	//HAL_Delay(2000);
   }
   /* USER CODE END 3 */
 }
