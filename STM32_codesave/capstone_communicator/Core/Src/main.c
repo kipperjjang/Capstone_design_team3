@@ -62,10 +62,6 @@ typedef struct {
 #define STAT_SEQ_ERR    (1 << 2)
 #define STAT_TIMEOUT    (1 << 3)
 
-#define CMD_AIM         (1 << 0)
-#define CMD_SHOOT       (1 << 1)
-#define CMD_STOP        (1 << 2)
-
 #define P_MAX   100.0f
 #define D_MAX   10.0f
 
@@ -163,7 +159,7 @@ uint8_t pc_seq_valid = 0;
 
 float target_yaw = 0.0f;
 float target_pitch = 0.0f;
-uint8_t pc_cmd = 1; // 1 aim on, 4 aim off
+uint8_t pc_cmd = 0x00; // 0 adding, 1 absolute
 
 float yaw_angle = 0.0f;
 float yaw_velocity = 0.0f;
@@ -175,7 +171,7 @@ uint8_t system_error = 0;
 
 float sweep_speed = 0.0f;
 
-float pitch_limit = 1.0f, yaw_limit = 1.0f;
+float pitch_limit = 0.5f, yaw_limit = 1.0f;
 uint16_t i = 0;
 
 uint8_t yaw_updated = 0;
@@ -204,6 +200,11 @@ uint8_t start = 0, start_init = 1;
 uint32_t start_time = 0;
 
 uint8_t send_skip = 0;
+
+float pitch_shootbefore_save;
+
+uint8_t save_once[6] = {0x01, 0x01, 0x01, 0x01, 0x01, 0x01};
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -363,8 +364,6 @@ static void UART_ProcessPCFrame(uint8_t *body){
         // pixel PD
         target_yaw = yaw_angle + target_yaw_add;
         target_pitch = pitch_angle + target_pitch_add;
-
-
     }
     else if(pc_cmd == 0x01){
     	// absolute angle
@@ -381,17 +380,6 @@ static void UART_ProcessPCFrame(uint8_t *body){
 		target_pitch = pitch_limit;
 	 else if(target_pitch <= -pitch_limit)
 		target_pitch = -pitch_limit;
-}
-
-void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){
-    if (GPIO_Pin == B1_Pin) {
-        uint32_t now = HAL_GetTick();
-
-        if (now - pc13_button_tick > 50) {
-            pc13_button_tick = now;
-            pc13_button_pressed++;
-        }
-    }
 }
 
 /* USER CODE END 0 */
@@ -519,28 +507,58 @@ int main(void)
 		  if((shoot_start <= time_now) && (time_now < (shoot_start + gap))){
 			  servo_s_move();
 			  servo_r_return();
+
+			  if(save_once[0] == 1){
+				  pitch_shootbefore_save = pitch_angle;
+				  save_once[0] = 0;
+			  }
 		  }
 		  else if(((shoot_start + reload_gap) <= time_now) && (time_now < (shoot_start + reload_gap + gap))){
 			  servo_s_return();
 			  servo_r_move();
+
+			  if(save_once[1] == 1){
+				  //target_pitch = pitch_shootbefore_save;
+				  save_once[1] = 0;
+			  }
 		  }
 
 		  if(((ball_gap + shoot_start) <= time_now) && (time_now < (ball_gap + shoot_start + gap))){
 			  servo_s_move();
 			  servo_r_return();
+
+			  if(save_once[2] == 1){
+				  pitch_shootbefore_save = pitch_angle;
+				  save_once[2] = 0;
+			  }
 		  }
 		  else if(((ball_gap + shoot_start + reload_gap) <= time_now) && (time_now < (ball_gap + shoot_start + reload_gap + gap))){
 			  servo_s_return();
 			  servo_r_move();
+
+			  if(save_once[3] == 1){
+				  //target_pitch = pitch_shootbefore_save;
+				  save_once[3] = 0;
+			  }
 		  }
 
 		  if(((2*ball_gap + shoot_start) <= time_now) && (time_now < (2*ball_gap + shoot_start + gap))){
 			  servo_s_move();
 			  servo_r_return();
+
+			  if(save_once[4] == 1){
+				  pitch_shootbefore_save = pitch_angle;
+				  save_once[4] = 0;
+			  }
 		  }
 		  else if(((2*ball_gap + shoot_start + reload_gap) <= time_now) && (time_now < (2*ball_gap + shoot_start + reload_gap + gap))){
 			  servo_s_return();
 			  servo_r_move();
+
+			  if(save_once[5] == 1){
+				  //target_pitch = pitch_shootbefore_save;
+				  save_once[5] = 0;
+			  }
 		  }
 
 		  else if((10000 <= time_now)){
@@ -564,8 +582,8 @@ int main(void)
 
 	  uint8_t seq = tx_seq++;
 
-	  CAN_SendCmd(NODE0_CMD_ID, target_yaw,   yaw_P,   yaw_D,   pc_cmd, seq);
-	  CAN_SendCmd(NODE1_CMD_ID, target_pitch, pitch_P, pitch_D, pc_cmd, seq);
+	  CAN_SendCmd(NODE0_CMD_ID, target_yaw,   yaw_P,   yaw_D,   1, seq);
+	  CAN_SendCmd(NODE1_CMD_ID, target_pitch, pitch_P, pitch_D, 1, seq);
 
 	  HAL_Delay(5);
 
@@ -904,6 +922,17 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){
+    if (GPIO_Pin == B1_Pin) {
+        uint32_t now = HAL_GetTick();
+
+        if (now - pc13_button_tick > 50) {
+            pc13_button_tick = now;
+            pc13_button_pressed++;
+        }
+    }
+}
 
 static void UART_ParseByte(uint8_t b){
     static uint8_t state = 0;

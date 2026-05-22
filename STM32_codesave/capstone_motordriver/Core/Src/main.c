@@ -91,7 +91,7 @@ TIM_HandleTypeDef htim1;
 
 /* USER CODE BEGIN PV */
 
-#define motor0
+#define motor1
 
 #ifdef motor0
 	#define NODE_ID              0U      // board0 0 / board1 1
@@ -107,7 +107,7 @@ TIM_HandleTypeDef htim1;
 	uint16_t AS5048_zeropos = 12803;   // board0 12803 / board1 10768
 
 	float pos_P = 20.0f;
-	float pos_I = 50.0f;
+	float pos_I = 0.0f;
 	float pos_D = 2.0f;
 
 	/*float pos_P = 25.0f;
@@ -132,9 +132,10 @@ TIM_HandleTypeDef htim1;
 	float pos_I = 300.0f;
 	float pos_D = 2.5f;*/
 
-	float pos_P = 20.0f;
-	float pos_I = 50.0f;
-	float pos_D = 2.0f;
+	float pos_P = 25.0f;
+	float pos_I =
+			0.0f;
+	float pos_D = 3.0f;
 
 #endif
 
@@ -145,10 +146,10 @@ float mech_limit = PI/2;
 
 float P_part, I_part, D_part;
 
-#define IQ_REF_LIMIT    (3.0f)
+#define IQ_REF_LIMIT    (4.0f)
 
-#define POS_I_ENABLE_ERR      (0.5f)   // [rad]
-#define POS_I_LIMIT_RATE      (0.5f)    // 처음에는 0.5 추천
+float POS_I_ENABLE_ERR = 0.5f;   // [rad]
+float POS_I_LIMIT_RATE = 0.5f;    // 처음에는 0.5 추천
 
 volatile float pos_ref_mech_rad    = 0.0f;
 
