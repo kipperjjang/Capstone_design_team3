@@ -80,7 +80,7 @@ TIM_HandleTypeDef htim1;
 
 /* USER CODE BEGIN PV */
 
-#define motor0
+#define motor1
 
 #ifdef motor0
 	#define NODE_ID              0U      // board0 0 / board1 1
@@ -93,13 +93,13 @@ TIM_HandleTypeDef htim1;
 	uint16_t AS5048_mech_zeropos = 12150; // board0 8040 / board1 11500
 
 	// motor electrical angle commutation
-	uint16_t AS5048_zeropos = 12803;   // board0 12803 / board1 10768
+	uint16_t AS5048_zeropos = 12790;   // board0 12790 / board1 10768
 
-	float pos_P = 10.0f;
-	float pos_I = 10.0f;
-	float pos_D = 1.9f;
+	float pos_P = 15.0f;
+	float pos_I = 30.0f;
+	float pos_D = 0.95f;
 
-	float W_M_LPF_ALPHA = 0.8f;
+	float W_M_LPF_ALPHA = 0.2f;
 
 	#define IQ_REF_LIMIT    (2.0f)
 
@@ -128,7 +128,7 @@ TIM_HandleTypeDef htim1;
 	float pos_I = 0.0f;
 	float pos_D = 1.0f;
 
-	float W_M_LPF_ALPHA = 0.8f;
+	float W_M_LPF_ALPHA = 0.2f;
 
 	#define IQ_REF_LIMIT    (5.0f)
 
@@ -140,13 +140,7 @@ TIM_HandleTypeDef htim1;
 float mech_limit = PI/2;
 
 volatile float pos_ref_mech_rad    = 0.0f;
-
 float P_part, I_part, D_part;
-
-
-
-// P 25.0, D 2.4, alpha 0.002
-
 float pos_err, pos_err_integral;
 
 // CAN communication setting
@@ -200,7 +194,7 @@ float cali_sin, cali_cos;
 #define AS5048_CPR        (16384.0f)
 #define AS5048_TO_RAD     (2.0f * PI / AS5048_CPR)
 
-#define POS_CTRL_HZ       (100)
+#define POS_CTRL_HZ       (200)
 #define POS_CTRL_DT       (1.0f / POS_CTRL_HZ)
 
 float th_m       = 0.0f;   // mechanical angle, wrapped [-pi, pi)
@@ -325,7 +319,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim){  //TIM interrupt ra
 
 		arm_sin_cos_f32(electrical_angle,&_sin,&_cos);
 
-		if(update++ >= 199){
+		if(update++ >= 99){
 			MechAngleSpeed_Update();
 			PositionPID_Update();
 			update = 0;
