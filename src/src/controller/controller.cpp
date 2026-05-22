@@ -1,8 +1,6 @@
 #include "controller/controller.hpp"
 
 #include <cmath>
-#include <iostream>
-#include <string>
 
 namespace {
 double distortionCoeff(const CameraCalibration &calibration, size_t index) {
@@ -96,70 +94,17 @@ Eigen::Vector2d computeBellAngle(const RobotState &state, const ControlConfig &c
 }
 } // namespace
 
-void Controller::run(const RobotState &state) {
-  state_ = state;
-  const Eigen::Vector2d img_center = state.img_center + config_.img_offset;
-  // Update FSM State
-  fsm_.update(state_);
+ControlState Controller::computeWebcamAngleSearch(const RobotState &webcam_state) const {
+  return ControlState::angle(computeBellAngle(webcam_state, config_));
+}
 
-  // std::cout << state.camera << std::endl;
-  // Handle based on the current state
-  switch (fsm_.getFSMState()) {
-    case FSMState::SEARCH: {
-      // Wait; zero control input
-      Eigen::Vector2d u = Eigen::Vector2d::Zero();
-      if (state.camera == "webcam" && state.detected) {
-        u = computeBellAngle(state, config_);
-        u(1) = u(1) / 2;
-        u_.update(u, false, false, false);
-      } else if (state.camera == "picam" && !state.detected) {
-        u_.update(u, true, false, false);
-      }
-      break;
-    }
+ControlState Controller::computePicamPixelTrack(const RobotState &picam_state) const {
+  const Eigen::Vector2d img_center = picam_state.img_center + config_.img_offset;
+  Eigen::Vector2d u = config_.Kp * (img_center - picam_state.p) - config_.Kd * picam_state.v;
+  u = (M_PI / 180.0) * u;
+  return ControlState::pixel(u);
+}
 
-    case FSMState::TRACK: {
-      // Compute desired angle
-      // Eigen::Vector2d u = Eigen::Vector2d(u_.u_yaw, u_.u_pitch);
-      // if (state.camera == "picam") {
-      //   u = computeBellAngle(state, config_) + config_.ang_offset;
-      // }
-      Eigen::Vector2d u = Eigen::Vector2d::Zero();
-      if (state.camera == "picam" && state.detected) {
-        u = config_.Kp * (img_center - state.p) - config_.Kd * state.v;
-        u = (M_PI / 180.0) * u;
-      }
-      
-      // std::cout << state.camera << " " << u.transpose() << std::endl;
-      // std::cout << u.transpose() << std::endl;
-      u_.update(u, true, false, false);
-      break;
-    }
-
-    case FSMState::AIM: {
-      // Predict bell position
-      Eigen::Vector2d v_bell = state.v;
-      Eigen::Vector2d p_pred = state.p + v_bell * config_.time_delay;
-
-      // Add offset for projectile motion and disturbance compensation
-      Eigen::Vector2d p_aim = p_pred;
-
-      // Compute desired angle
-      Eigen::Vector2d u = -config_.Kp * p_aim - config_.Kd * state.v;
-      // Shooting condition
-      const bool fire = (p_pred).norm() < config_.err_p_fire && state_.v.norm() < config_.err_v_track;
-      u_.update(u, true, fire, false);
-      break;
-    }
-
-    case FSMState::RELOAD: {
-      u_.update(Eigen::Vector2d::Zero(), false, false, true);
-      break;
-    }
-
-    default: {
-      u_.update(Eigen::Vector2d::Zero(), false, false, false);
-      break;
-    }
-  }
+ControlState Controller::computeJointHold(const Eigen::Vector2d &joint) const {
+  return ControlState::angle(joint);
 }

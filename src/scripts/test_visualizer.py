@@ -484,6 +484,18 @@ class TestVisualizer(Node):
         f'fire={self.latest_control.fire} reload={self.latest_control.reload}')
       control_y = 255 if self.use_fixed_view else 230
       cv2.putText(image, text, (20, control_y), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (70, 70, 70), 1)
+      mode = getattr(self.latest_control, 'tracking_mode', '')
+      source = getattr(self.latest_control, 'control_source', '')
+      is_pixel = getattr(self.latest_control, 'is_pixel', False)
+      if mode or source:
+        cv2.putText(
+          image,
+          f'{mode} / {source} pixel={is_pixel}',
+          (20, control_y + 24),
+          cv2.FONT_HERSHEY_SIMPLEX,
+          0.55,
+          (70, 70, 70),
+          1)
 
   def draw(self):
     image = np.full((self.height, self.width, 3), 255, dtype=np.uint8)

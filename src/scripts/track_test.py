@@ -239,6 +239,20 @@ class TrackTest(Node):
         (0, 0, 0),
         1,
         cv2.LINE_AA)
+      y += 24
+      mode = getattr(ctrl, 'tracking_mode', '')
+      source = getattr(ctrl, 'control_source', '')
+      is_pixel = getattr(ctrl, 'is_pixel', False)
+      if mode or source:
+        cv2.putText(
+          image,
+          f'{mode} / {source} pixel={is_pixel}',
+          (16, y),
+          cv2.FONT_HERSHEY_SIMPLEX,
+          0.55,
+          (0, 0, 0),
+          1,
+          cv2.LINE_AA)
 
   def drawLegend(self, image):
     h = image.shape[0]

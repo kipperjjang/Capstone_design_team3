@@ -16,4 +16,16 @@ struct ControlState {
     reload = _reload;
     isPixel = _isPixel;
   }
+
+  static ControlState pixel(const Eigen::Vector2d &u) {
+    ControlState out;
+    out.update(u, true, false, false);
+    return out;
+  }
+
+  static ControlState angle(const Eigen::Vector2d &u) {
+    ControlState out;
+    out.update(u, false, false, false);
+    return out;
+  }
 };

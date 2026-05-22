@@ -20,3 +20,11 @@ float64 u_yaw
 float64 u_pitch
 bool fire
 bool reload
+
+string tracking_mode
+string control_source
+bool is_pixel
+bool webcam_enabled
+float64 picam_age
+float64 webcam_age
+float64 source_age
