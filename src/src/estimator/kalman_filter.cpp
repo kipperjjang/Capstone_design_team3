@@ -1,30 +1,33 @@
 #include "estimator/kalman_filter.hpp"
 
 KalmanFilter::KalmanFilter(const EstimatorConfig &config) : config_(config) {
-  x_pred_ = Eigen::VectorXd::Zero(6);
-  x_ = Eigen::VectorXd::Zero(6);
-  P_ = Eigen::MatrixXd::Identity(6, 6);
-  H_ = Eigen::MatrixXd::Identity(6, 6);
+  x_        = Eigen::VectorXd::Zero(6);
+  x_prior_  = Eigen::VectorXd::Zero(6);
+  P_        = Eigen::MatrixXd::Identity(6, 6);
+  P_prior_  = Eigen::MatrixXd::Identity(6, 6);
+  H_        = Eigen::MatrixXd::Identity(6, 6);
 }
 
 void KalmanFilter::init(const Eigen::Vector2d &p, const Eigen::Vector2d &v) {
   x_.setZero();
   x_.segment<2>(0) = p;
   x_.segment<2>(2) = v;
-  x_pred_ = x_;
+  x_prior_ = x_;
 
   P_.setZero();
   P_.block<2, 2>(0, 0) = Eigen::Matrix2d::Identity() * config_.p0_pos;
   P_.block<2, 2>(2, 2) = Eigen::Matrix2d::Identity() * config_.p0_vel;
   P_.block<2, 2>(4, 4) = Eigen::Matrix2d::Identity() * config_.p0_acc;
+  P_prior_ = P_;
 
   initialized_ = true;
 }
 
 void KalmanFilter::reset() {
   x_.setZero();
-  x_pred_.setZero();
+  x_prior_.setZero();
   P_.setIdentity();
+  P_prior_.setIdentity();
   initialized_ = false;
 }
 
@@ -83,48 +86,51 @@ Eigen::MatrixXd KalmanFilter::getQ(double dt) const {
   return Q;
 }
 
-void KalmanFilter::predict(double dt, bool isProcess) {
-  if (!initialized_ || dt <= 0.0) return;
+void KalmanFilter::predict(double dt) {
+  if (!initialized_) return;
+  if (dt <= 0.0) {
+    x_prior_ = x_;
+    P_prior_ = P_;
+    return;
+  }
 
   const Eigen::MatrixXd F = getF(dt);
   const Eigen::MatrixXd Q = getQ(dt);
 
-  if (isProcess) {
-    x_pred_ = F * x_;
-  } else {
-    x_ = F * x_;
-    x_pred_ = x_;
-    P_ = F * P_ * F.transpose() + Q;
-  }
+  x_prior_ = F * x_;
+  P_prior_ = F * P_ * F.transpose() + Q;
 }
 
-Eigen::VectorXd KalmanFilter::getPredictedState(double dt) const {
+Eigen::VectorXd KalmanFilter::predictedState(double dt) const {
   if (!initialized_ || dt <= 0.0) return x_;
   return getF(dt) * x_;
 }
 
-void KalmanFilter::update(const Eigen::VectorXd &z, const Eigen::MatrixXd &H, const Eigen::MatrixXd &R, const Eigen::VectorXd &prior) {
-  const Eigen::VectorXd y = z - H * prior;
-  const Eigen::MatrixXd S = H * P_ * H.transpose() + R;
-  const Eigen::MatrixXd K = P_ * H.transpose() * S.inverse();
+void KalmanFilter::update(const Eigen::VectorXd &z, const Eigen::MatrixXd &H, const Eigen::MatrixXd &R) {
+  if (!initialized_) return;
+
+  const Eigen::VectorXd y = z - H * x_prior_;
+  const Eigen::MatrixXd S = H * P_prior_ * H.transpose() + R;
+  const Eigen::MatrixXd K = P_prior_ * H.transpose() * S.inverse();
   const Eigen::MatrixXd I = Eigen::MatrixXd::Identity(6, 6);
 
-  x_ = prior + K * y;
-  x_pred_ = x_;
-  P_ = (I - K * H) * P_;
+  x_ = x_prior_ + K * y;
+  P_ = (I - K * H) * P_prior_;
+  x_prior_ = x_;
+  P_prior_ = P_;
 }
 
 void KalmanFilter::updatePosition(const Eigen::Vector2d &p, const Eigen::Matrix2d &R) {
   if (!initialized_) return;
-  update(p, H_.block(0, 0, 2, 6), R, x_pred_);
+  update(p, H_.block(0, 0, 2, 6), R);
 }
 
 void KalmanFilter::updateVelocity(const Eigen::Vector2d &v, const Eigen::Matrix2d &R) {
   if (!initialized_) return;
-  update(v, H_.block(2, 0, 2, 6), R, x_pred_);
+  update(v, H_.block(2, 0, 2, 6), R);
 }
 
 void KalmanFilter::updateAcceleration(const Eigen::Vector2d &a, const Eigen::Matrix2d &R) {
   if (!initialized_) return;
-  update(a, H_.block(4, 0, 2, 6), R, x_pred_);
+  update(a, H_.block(4, 0, 2, 6), R);
 }

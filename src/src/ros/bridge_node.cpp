@@ -21,8 +21,8 @@ constexpr size_t  kMinFrameSize = kHeaderSize + kCrcSize;
 constexpr size_t  kPrevStatusOffset = 2;
 constexpr size_t  kLenOffset = 3;
 constexpr size_t  kSeqOffset = 4;
-constexpr uint8_t kStatusOk = 0x01;
-constexpr uint8_t kStatusFailed = 0x00;
+constexpr uint8_t kStatusOk = 0x00;
+constexpr uint8_t kStatusFailed = 0x01;
 
 uint16_t crc16Ccitt(const uint8_t *data, size_t size) {
   uint16_t crc = 0xFFFF;
@@ -64,26 +64,15 @@ std::vector<uint8_t> makeControlFrame(
   // appendBytes(frame, &msg.u_pitch_dot, sizeof(msg.u_pitch_dot));
 
   uint8_t flags = 0x00;
-  // Pixel, angle
   if (!msg.ispixel) {
     flags |= 0x01;
   }
-
-  if (msg.fire) {
-    flags |= 0x02;   // STM 기준 CMD_SHOOT = bit 1
-  }
-
-  if (msg.reload) {
-    flags |= 0x04;   // 임시로 STOP에 매핑하거나, 별도 정의 필요
-  }
-
   frame.push_back(flags);
 
   const uint16_t crc = crc16Ccitt(frame.data() + kSof.size(), frame.size() - kSof.size());
 
   frame.push_back(static_cast<uint8_t>(crc & 0xFF));
   frame.push_back(static_cast<uint8_t>((crc >> 8) & 0xFF));
-
   return frame;
 }
 
@@ -95,17 +84,16 @@ BridgeNode::BridgeNode() : Node("bridge_node") {
   this->get_parameter("config_path", config_path);
 
   const PortConfig port_config = PortConfig::load(config_path);
-  // serial_ = std::make_unique<Serial>(port_config, true);
-  serial_ = std::make_unique<Serial>(port_config, false);
+  serial_ = std::make_unique<Serial>(port_config);
 
   const auto qos_latest = rclcpp::QoS(rclcpp::KeepLast(1));
-  control_sub_ = this->create_subscription<custom_msgs::msg::ControlMsg>("/control", qos_latest, std::bind(&BridgeNode::controlCallback, this, _1));
-  joint_pub_ = this->create_publisher<custom_msgs::msg::JointMsg>("/joint", qos_latest);
+  control_sub_  = this->create_subscription<custom_msgs::msg::ControlMsg>("/control", qos_latest, std::bind(&BridgeNode::controlCallback, this, _1));
+  joint_pub_    = this->create_publisher<custom_msgs::msg::JointMsg>("/joint", qos_latest);
 
-  const int read_period_ms = std::max(1, static_cast<int>(1000.0 / port_config.watchdog_frequency));
-  read_timer_ = this->create_wall_timer(std::chrono::milliseconds(read_period_ms), std::bind(&BridgeNode::readTimerCallback, this));
+  const int read_period_ms  = std::max(1, static_cast<int>(1000.0 / port_config.watchdog_frequency));
   const int write_period_ms = std::max(1, static_cast<int>(1000.0 / port_config.write_frequency));
-  write_timer_ = this->create_wall_timer(std::chrono::milliseconds(write_period_ms), std::bind(&BridgeNode::writeTimerCallback, this));
+  read_timer_   = this->create_wall_timer(std::chrono::milliseconds(read_period_ms), std::bind(&BridgeNode::readTimerCallback, this));
+  write_timer_  = this->create_wall_timer(std::chrono::milliseconds(write_period_ms), std::bind(&BridgeNode::writeTimerCallback, this));
   buffer_.reserve(1024);
 }
 
@@ -150,9 +138,7 @@ bool BridgeNode::writeFrameToSerial(const std::vector<uint8_t> &frame) {
 
 bool BridgeNode::readSerialFrame() {
   std::array<uint8_t, 256> read_buffer{};
-  if (!serial_ || !serial_->isOpen()) {
-    return false;
-  }
+  if (!serial_ || !serial_->isOpen()) return false;
 
   // Read Serial Frame
   const ssize_t bytes_read = serial_->readSerial(read_buffer.data(), read_buffer.size());
@@ -205,9 +191,6 @@ bool BridgeNode::parseReadFrames(std::vector<uint8_t> &buffer) {
     uint16_t received_crc = 0;
     std::memcpy(&received_crc, buffer.data() + frame_size - kCrcSize, sizeof(received_crc));
     const uint16_t computed_crc = crc16Ccitt(buffer.data() + kSof.size(), frame_size - kSof.size() - kCrcSize);
-    
-    // std::cout << "CRC received:\t" << received_crc << std::endl;
-    // std::cout << "CRC computed:\t" << computed_crc << std::endl;
     if (received_crc != computed_crc) {
       previous_read_status_ = false;
       RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000, "Dropping serial frame with invalid CRC16.");
@@ -221,8 +204,6 @@ bool BridgeNode::parseReadFrames(std::vector<uint8_t> &buffer) {
     if (!remote_received_previous_write && !last_write_frame_.empty()) {
       (void)writeFrameToSerial(last_write_frame_);
     }
-
-    // const uint8_t read_seq = buffer[kSeqOffset];
 
     // Read data
     std::array<float, 6> values{};

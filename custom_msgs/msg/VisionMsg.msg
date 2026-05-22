@@ -2,7 +2,6 @@ std_msgs/Header header
 
 # Boolean
 bool detected
-bool tracked
 
 # State value pixel (x, y)
 float32[] p

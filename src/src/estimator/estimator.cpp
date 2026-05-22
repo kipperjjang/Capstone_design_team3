@@ -1,103 +1,177 @@
 #include "estimator/estimator.hpp"
 
-const RobotState &Estimator::getState(bool isProcess) {
-  if (kf_.isInitialized()) {
-    const Eigen::VectorXd &x = isProcess ? kf_.x_pred() : kf_.x();
-    state_.p = x.segment<2>(0);
-    state_.v = x.segment<2>(2);
-    state_.a = x.segment<2>(4);
-    state_.has_velocity = true;
-    state_.has_acceleration = true;
+RobotState Estimator::attachJointMetadata(RobotState state) const {
+  if (has_latest_joint_) {
+    state.joint = latest_joint_;
+    state.joint_vel = latest_joint_vel_;
   }
-  return state_;
+  return state;
 }
 
-const RobotState &Estimator::getState(double dt) {
-  if (kf_.isInitialized()) {
-    const Eigen::VectorXd &x = kf_.getPredictedState(dt);
-    state_.p = x.segment<2>(0);
-    state_.v = x.segment<2>(2);
-    state_.a = x.segment<2>(4);
-    state_.has_velocity = true;
-    state_.has_acceleration = true;
+Eigen::Vector2d Estimator::initialVelocityForMeasurement(const RobotState &state) const {
+  if (state.has_velocity) {
+    return state.v;
   }
-  return state_;
+
+  if (has_last_measurement_state_) {
+    const double dt = state.t - last_measurement_state_.t;
+    if (dt > 0.0 && dt <= config_.max_time_gap && last_measurement_state_.detected) {
+      return (state.p - last_measurement_state_.p) / dt;
+    }
+  }
+
+  return Eigen::Vector2d::Zero();
+}
+
+RobotState Estimator::stateFromFilter(
+    const Eigen::VectorXd &x,
+    RobotState metadata,
+    bool process,
+    double t,
+    double dt) const {
+  RobotState state = attachJointMetadata(metadata);
+  if (x.size() >= 6) {
+    state.p = x.segment<2>(0);
+    state.v = x.segment<2>(2);
+    state.a = x.segment<2>(4);
+    state.has_velocity = true;
+    state.has_acceleration = true;
+  }
+  state.t = t;
+  state.dt = dt;
+  state.process = process;
+  if (process) {
+    state.detected = false;
+  }
+  return state;
 }
 
 void Estimator::init(const RobotState &state) {
   // Initialize estimator
-  if (!state.detected && !state.tracked) return;
+  if (!state.detected) return;
 
-  kf_.init(state.p, state.has_velocity ? state.v : Eigen::Vector2d::Zero());
+  const RobotState measurement = attachJointMetadata(state);
+  const Eigen::Vector2d initial_velocity = initialVelocityForMeasurement(measurement);
+  kf_.init(measurement.p, initial_velocity);
 
-  state_ = state;
-  state_.process = false;
-  state_.dt = 0.0;
+  updated_state_ = stateFromFilter(kf_.x(), measurement, false, measurement.t, 0.0);
+  predicted_state_ = updated_state_;
+  has_predicted_state_ = false;
 
-  last_measurement_time_ = state.t;
-  initialized_ = true;
+  last_measurement_state_ = measurement;
+  has_last_measurement_state_ = true;
+  last_measurement_time_ = measurement.t;
+  last_prediction_time_ = measurement.t;
+  initialized_ = kf_.isInitialized();
+}
+
+void Estimator::reset() {
+  kf_.reset();
+  initialized_ = false;
+  has_predicted_state_ = false;
 }
 
 void Estimator::update(const RobotState &state) {
-  // Update estimator state
-  const double t = state.t;
-  const double dt = t - last_measurement_time_;
-  const bool has_measurement = state.detected || state.tracked;
+  if (!state.detected) return;
 
-  state_ = state;
-  state_.process = false;
-  state_.dt = dt;
-
-  // Update State with the vision input
-  if (dt < 0.0) return;
-
-  if (dt > config_.max_time_gap) {
-    // Reset Filter
-    kf_.reset();
-    initialized_ = false;
-    if (!has_measurement) return;
-
-    // Re-initialize with the new vision input
-    kf_.init(state.p, state.has_velocity ? state.v : Eigen::Vector2d::Zero());
-    initialized_ = true;
-  } else {
-    if (!has_measurement) return;
-
-    kf_.predict(dt, false);
-    const double r_position = state.detected ? config_.r_detected : config_.r_tracked;
-    kf_.updatePosition(state.p, Eigen::Matrix2d::Identity() * r_position);
-    if (state.has_velocity) {
-      kf_.updateVelocity(state.v, Eigen::Matrix2d::Identity() * config_.r_temp_vel);
-    }
-    if (state.has_acceleration) {
-      kf_.updateAcceleration(state.a, Eigen::Matrix2d::Identity() * config_.r_temp_acc);
-    }
-  }
-
-  last_measurement_time_ = t;
-}
-
-void Estimator::update(const double t) {
-  const double dt = t - last_measurement_time_;
-  if (dt < 0.0) return;
-
-  state_.process = true;
-  state_.dt = dt;
-  state_.t = t;
-  state_.detected = false;
-  state_.tracked = false;
-
-  // Predict state via process
-  if (dt > config_.max_time_gap) {
-    kf_.reset();
-    initialized_ = false;
+  // Get current measurement
+  const RobotState measurement = attachJointMetadata(state);
+  if (!initialized_) {
+    init(state);
     return;
-    // No input to update; timer callback
   }
-  kf_.predict(dt, true);
+  
+  // Time check
+  const double dt = measurement.t - last_measurement_time_;
+  if (dt < 0.0) return;
+  if (dt > config_.max_time_gap) {
+    reset();
+    init(measurement);
+    return;
+  }
+
+  // Compute Kalman prior
+  kf_.predict(dt);
+
+  // Update state
+  kf_.updatePosition(measurement.p, Eigen::Matrix2d::Identity() * config_.r_pos);
+  if (measurement.has_velocity) {
+    kf_.updateVelocity(measurement.v, Eigen::Matrix2d::Identity() * config_.r_vel);
+  }
+  if (measurement.has_acceleration) {
+    kf_.updateAcceleration(measurement.v, Eigen::Matrix2d::Identity() * config_.r_acc);
+  }
+
+  updated_state_ = stateFromFilter(kf_.x(), measurement, false, measurement.t, dt);
+  predicted_state_ = updated_state_;
+  has_predicted_state_ = false;
+
+  last_measurement_state_ = measurement;
+  has_last_measurement_state_ = true;
+  last_measurement_time_ = measurement.t;
+  initialized_ = kf_.isInitialized();
 }
 
-void Estimator::update(const Eigen::Vector2d &joint, const Eigen::Vector2d &joint_vel) {
-  state_.joint = joint;
-  state_.joint_vel = joint_vel;
+RobotState Estimator::predict(double t) {
+  RobotState last_state = has_predicted_state_ ? predicted_state_ : updated_state_;
+  if (!initialized_) {
+    return attachJointMetadata(last_state);
+  }
+
+  // Time check
+  const double dt = t - last_measurement_time_;
+  if (dt < 0.0) return last_state;
+  if (dt > config_.max_time_gap) {
+    reset();
+    RobotState state = attachJointMetadata(last_state);
+    state.t = t;
+    state.dt = dt;
+    state.process = true;
+    state.detected = false;
+    predicted_state_ = state;
+    has_predicted_state_ = true;
+    last_prediction_time_ = t;
+    return predicted_state_;
+  }
+
+  predicted_state_ = stateFromFilter(kf_.predictedState(dt), updated_state_, true, t, dt);
+  has_predicted_state_ = true;
+  last_prediction_time_ = t;
+  return predicted_state_;
+}
+
+void Estimator::updateJoint(const Eigen::Vector2d &joint, const Eigen::Vector2d &joint_vel, double t) {
+  latest_joint_ = joint;
+  latest_joint_vel_ = joint_vel;
+  latest_joint_time_ = t;
+  has_latest_joint_ = true;
+  
+  updated_state_ = attachJointMetadata(updated_state_);
+  if (has_predicted_state_) {
+    predicted_state_ = attachJointMetadata(predicted_state_);
+  }
+}
+
+RobotState Estimator::predictedState(double t) const {
+  RobotState last_state = has_predicted_state_ ? predicted_state_ : updated_state_;
+  if (!initialized_) {
+    return attachJointMetadata(last_state);
+  }
+
+  const double dt = t - last_measurement_time_;
+  if (dt < 0.0) {
+    return attachJointMetadata(last_state);
+  }
+
+  return predictedStateFromDt(dt);
+}
+
+RobotState Estimator::predictedStateFromDt(double dt) const {
+  RobotState last_state = has_predicted_state_ ? predicted_state_ : updated_state_;
+  if (!initialized_) {
+    return attachJointMetadata(last_state);
+  }
+
+  const double clamped_dt = std::max(0.0, dt);
+  return stateFromFilter(kf_.predictedState(clamped_dt), updated_state_, true, last_measurement_time_ + clamped_dt, clamped_dt);
 }

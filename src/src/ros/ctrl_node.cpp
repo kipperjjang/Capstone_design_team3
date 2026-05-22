@@ -22,9 +22,7 @@ void fillVector2(std::array<double, 2> &output, const Eigen::Vector2d &input) {
 CtrlNode::CtrlNode() : Node("control_node") {
   // Read Configuration
   std::string config_path;
-  std::string vision_topic;
-  std::string vision_webcam_topic;
-  std::string vision_picam_topic;
+  std::string vision_topic, vision_webcam_topic, vision_picam_topic;
   this->declare_parameter<std::string>("config_path", "");
   this->declare_parameter<std::string>("vision_topic", "/vision");
   this->declare_parameter<std::string>("vision_webcam_topic", "/vision_webcam");
@@ -39,19 +37,19 @@ CtrlNode::CtrlNode() : Node("control_node") {
   const ControlConfig controller_config = ControlConfig::load(config_path);
 
   // Initilaize
-  estimator_ = std::make_unique<Estimator>(estimator_config);
+  estimator_  = std::make_unique<Estimator>(estimator_config);
   controller_ = std::make_unique<Controller>(controller_config);
 
   // Subscriber and Publisher
   const auto qos_latest = rclcpp::QoS(rclcpp::KeepLast(1));
-  vision_sub_ = this->create_subscription<custom_msgs::msg::VisionMsg>(vision_topic, qos_latest, std::bind(&CtrlNode::visionCallback, this, _1));
-  vision_webcam_sub_ = this->create_subscription<custom_msgs::msg::VisionMsg>(vision_webcam_topic, qos_latest, std::bind(&CtrlNode::visionCallback, this, _1));
-  vision_picam_sub_ = this->create_subscription<custom_msgs::msg::VisionMsg>(vision_picam_topic, qos_latest, std::bind(&CtrlNode::visionCallback, this, _1));
-  joint_sub_ = this->create_subscription<custom_msgs::msg::JointMsg>("/joint", qos_latest, std::bind(&CtrlNode::jointCallback, this, _1));
-  ctrl_pub_ = this->create_publisher<custom_msgs::msg::ControlMsg>("/control", qos_latest);
-  debug_pub_ = this->create_publisher<custom_msgs::msg::TestDebug>("/test/debug", qos_latest);
-  webcam_enabled_pub_ = this->create_publisher<std_msgs::msg::Bool>(
-      "/vision_webcam/enabled", rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable());
+  vision_sub_         = this->create_subscription<custom_msgs::msg::VisionMsg>(vision_topic, qos_latest, std::bind(&CtrlNode::visionCallback, this, _1));
+  vision_webcam_sub_  = this->create_subscription<custom_msgs::msg::VisionMsg>(vision_webcam_topic, qos_latest, std::bind(&CtrlNode::visionCallback, this, _1));
+  vision_picam_sub_   = this->create_subscription<custom_msgs::msg::VisionMsg>(vision_picam_topic, qos_latest, std::bind(&CtrlNode::visionCallback, this, _1));
+  joint_sub_          = this->create_subscription<custom_msgs::msg::JointMsg>("/joint", qos_latest, std::bind(&CtrlNode::jointCallback, this, _1));
+
+  ctrl_pub_           = this->create_publisher<custom_msgs::msg::ControlMsg>("/control", qos_latest);
+  debug_pub_          = this->create_publisher<custom_msgs::msg::TestDebug>("/test/debug", qos_latest);
+  webcam_enabled_pub_ = this->create_publisher<std_msgs::msg::Bool>("/vision_webcam/enabled", rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable());
 
   const int period = static_cast<int>(1000.0 / controller_config.hz);
   timer_ = this->create_wall_timer(std::chrono::milliseconds(period), std::bind(&CtrlNode::timerCallback, this));
@@ -61,13 +59,13 @@ void CtrlNode::jointCallback(const custom_msgs::msg::JointMsg::SharedPtr msg) {
   // Cache joint data
   if (!first_joint_) first_joint_ = true;
 
-  joint_ = toEigen(msg->joint);
-  joint_vel_ = toEigen(msg->joint_vel);
+  joint_      = toEigen(msg->joint);
+  joint_vel_  = toEigen(msg->joint_vel);
 }
 
 void CtrlNode::visionCallback(const custom_msgs::msg::VisionMsg::SharedPtr msg) {
   if (msg == nullptr) return;
-  if ((msg->detected || msg->tracked) && msg->p.size() < 2) return;
+  if (!msg->detected || msg->p.size() < 2) return;
 
   RobotState vision_state(msg);
   
@@ -75,13 +73,13 @@ void CtrlNode::visionCallback(const custom_msgs::msg::VisionMsg::SharedPtr msg) 
   vision_state.t = receive_time;
 
   if (vision_state.camera == "picam") {
-    latest_picam_state_ = vision_state;
-    latest_picam_receive_time_ = receive_time;
-    has_latest_picam_state_ = true;
+    latest_picam_state_         = vision_state;
+    latest_picam_receive_time_  = receive_time;
+    has_latest_picam_state_     = true;
   } else {
-    latest_webcam_state_ = vision_state;
+    latest_webcam_state_        = vision_state;
     latest_webcam_receive_time_ = receive_time;
-    has_latest_webcam_state_ = true;
+    has_latest_webcam_state_    = true;
   }
 }
 
