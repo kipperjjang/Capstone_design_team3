@@ -95,13 +95,16 @@ TIM_HandleTypeDef htim1;
 	// motor electrical angle commutation
 	uint16_t AS5048_zeropos = 12803;   // board0 12803 / board1 10768
 
-	float pos_P = 20.0f;
-	float pos_I = 0.0f;
-	float pos_D = 2.0f;
+	float pos_P = 10.0f;
+	float pos_I = 10.0f;
+	float pos_D = 1.9f;
 
-	/*float pos_P = 25.0f;
-	float pos_I = 0.0f;
-	float pos_D = 2.4f;*/
+	float W_M_LPF_ALPHA = 0.8f;
+
+	#define IQ_REF_LIMIT    (2.0f)
+
+	float POS_I_ENABLE_ERR = 0.1f;   // [rad]
+	float POS_I_LIMIT_RATE = 0.5f;
 #endif
 
 #ifdef motor1
@@ -121,24 +124,26 @@ TIM_HandleTypeDef htim1;
 	float pos_I = 300.0f;
 	float pos_D = 2.5f;*/
 
-	float pos_P = 25.0f;
+	float pos_P = 10.0f;
 	float pos_I = 0.0f;
-	float pos_D = 3.0f;
+	float pos_D = 1.0f;
+
+	float W_M_LPF_ALPHA = 0.8f;
+
+	#define IQ_REF_LIMIT    (5.0f)
+
+	float POS_I_ENABLE_ERR = 0.1f;   // [rad]
+	float POS_I_LIMIT_RATE = 0.5f;
 
 #endif
 
 float mech_limit = PI/2;
 
-#define W_M_LPF_ALPHA     (0.002f)
+volatile float pos_ref_mech_rad    = 0.0f;
 
 float P_part, I_part, D_part;
 
-#define IQ_REF_LIMIT    (4.0f)
 
-float POS_I_ENABLE_ERR = 0.5f;   // [rad]
-float POS_I_LIMIT_RATE = 0.5f;    // 처음에는 0.5 추천
-
-volatile float pos_ref_mech_rad    = 0.0f;
 
 // P 25.0, D 2.4, alpha 0.002
 
@@ -195,7 +200,7 @@ float cali_sin, cali_cos;
 #define AS5048_CPR        (16384.0f)
 #define AS5048_TO_RAD     (2.0f * PI / AS5048_CPR)
 
-#define POS_CTRL_HZ       (20000.0f)
+#define POS_CTRL_HZ       (100)
 #define POS_CTRL_DT       (1.0f / POS_CTRL_HZ)
 
 float th_m       = 0.0f;   // mechanical angle, wrapped [-pi, pi)
@@ -207,6 +212,7 @@ float th_m_prev    = 0.0f;
 uint8_t th_m_init  = 0U;
 
 uint8_t not_aim = 0;
+uint8_t update = 0;;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -319,8 +325,11 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim){  //TIM interrupt ra
 
 		arm_sin_cos_f32(electrical_angle,&_sin,&_cos);
 
-		MechAngleSpeed_Update();
-		PositionPID_Update();
+		if(update++ >= 199){
+			MechAngleSpeed_Update();
+			PositionPID_Update();
+			update = 0;
+		}
 
 		// alpha beta current calculation
 		ic = current_A[0] - current_A_calibrated;  // A<->C mapping hardware issue
@@ -587,8 +596,8 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
 
-	//pos_ref_mech_rad = -pos_ref_mech_rad;
-	//HAL_Delay(2000);
+	pos_ref_mech_rad = -pos_ref_mech_rad;
+	HAL_Delay(2000);
   }
   /* USER CODE END 3 */
 }
