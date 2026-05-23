@@ -13,92 +13,166 @@ ControlConfig testConfig() {
 
 ControlFSMInput baseInput() {
   ControlFSMInput input;
-  input.has_new_picam_target = false;
-  input.has_picam_lock = false;
-  input.estimator_initialized = false;
-  input.has_fresh_webcam_target = false;
   input.picam_age = 100.0;
   input.webcam_age = 100.0;
   return input;
 }
 
-void testPicamDetectionHasPriority() {
-  ControlFSM fsm(testConfig());
+ControlFSMInput newPicamInput() {
   ControlFSMInput input = baseInput();
   input.has_new_picam_target = true;
   input.has_picam_lock = true;
   input.estimator_initialized = true;
-  input.has_fresh_webcam_target = true;
-  input.picam_age = 0.1;
-
-  const ControlFSMOutput output = fsm.update(input);
-  assert(output.mode == TrackingMode::PICAM_TRACK);
-  assert(output.source == ControlSource::PICAM_DETECTION);
-  assert(!output.webcam_enabled);
-  assert(!output.predicted_only);
+  input.picam_age = 0.0;
+  return input;
 }
 
-void testPredictionWindow() {
-  ControlFSM fsm(testConfig());
+ControlFSMInput picamLockInput(double picam_age) {
   ControlFSMInput input = baseInput();
   input.has_picam_lock = true;
   input.estimator_initialized = true;
-  input.picam_age = 0.2;
-
-  const ControlFSMOutput output = fsm.update(input);
-  assert(output.mode == TrackingMode::PICAM_PREDICT);
-  assert(output.source == ControlSource::PICAM_PREDICTION);
-  assert(!output.webcam_enabled);
-  assert(output.predicted_only);
+  input.picam_age = picam_age;
+  return input;
 }
 
-void testHoldWindowAfterPrediction() {
+void assertOutput(
+    const ControlFSMOutput &output,
+    TrackingMode mode,
+    ControlSource source,
+    bool webcam_enabled,
+    bool predicted_only) {
+  assert(output.mode == mode);
+  assert(output.source == source);
+  assert(output.webcam_enabled == webcam_enabled);
+  assert(output.predicted_only == predicted_only);
+}
+
+void testIdleToWebcamSearch() {
   ControlFSM fsm(testConfig());
   ControlFSMInput input = baseInput();
-  input.has_picam_lock = true;
-  input.estimator_initialized = true;
-  input.picam_age = 0.5;
   input.has_fresh_webcam_target = true;
 
-  const ControlFSMOutput output = fsm.update(input);
-  assert(output.mode == TrackingMode::PICAM_HOLD);
-  assert(output.source == ControlSource::JOINT_HOLD);
-  assert(!output.webcam_enabled);
-  assert(!output.predicted_only);
+  assertOutput(
+      fsm.update(input),
+      TrackingMode::WEBCAM_SEARCH,
+      ControlSource::WEBCAM_DETECTION,
+      true,
+      false);
+  assert(fsm.mode() == TrackingMode::WEBCAM_SEARCH);
 }
 
-void testWebcamSearchAfterHoldExpires() {
+void testWebcamSearchToIdleWhenTargetStales() {
   ControlFSM fsm(testConfig());
   ControlFSMInput input = baseInput();
-  input.has_picam_lock = true;
-  input.estimator_initialized = true;
-  input.picam_age = 1.5;
   input.has_fresh_webcam_target = true;
+  fsm.update(input);
 
-  const ControlFSMOutput output = fsm.update(input);
-  assert(output.mode == TrackingMode::WEBCAM_SEARCH);
-  assert(output.source == ControlSource::WEBCAM_DETECTION);
-  assert(output.webcam_enabled);
-  assert(!output.predicted_only);
+  assertOutput(
+      fsm.update(baseInput()),
+      TrackingMode::IDLE,
+      ControlSource::JOINT_HOLD,
+      true,
+      false);
 }
 
-void testIdleWhenNoTarget() {
+void testPicamAcquireHasGlobalPriority() {
   ControlFSM fsm(testConfig());
-  const ControlFSMOutput output = fsm.update(baseInput());
+  ControlFSMInput webcam = baseInput();
+  webcam.has_fresh_webcam_target = true;
+  fsm.update(webcam);
 
-  assert(output.mode == TrackingMode::IDLE);
-  assert(output.source == ControlSource::JOINT_HOLD);
-  assert(output.webcam_enabled);
-  assert(!output.predicted_only);
+  assertOutput(
+      fsm.update(newPicamInput()),
+      TrackingMode::PICAM_TRACK,
+      ControlSource::PICAM_DETECTION,
+      false,
+      false);
+}
+
+void testPicamTrackToPredict() {
+  ControlFSM fsm(testConfig());
+  fsm.update(newPicamInput());
+
+  assertOutput(
+      fsm.update(picamLockInput(0.1)),
+      TrackingMode::PICAM_PREDICT,
+      ControlSource::PICAM_PREDICTION,
+      false,
+      true);
+}
+
+void testPicamPredictToHold() {
+  ControlFSM fsm(testConfig());
+  fsm.update(newPicamInput());
+  fsm.update(picamLockInput(0.1));
+
+  assertOutput(
+      fsm.update(picamLockInput(0.5)),
+      TrackingMode::PICAM_HOLD,
+      ControlSource::JOINT_HOLD,
+      false,
+      false);
+}
+
+void testPicamHoldToWebcamSearchAfterLockExpires() {
+  ControlFSM fsm(testConfig());
+  fsm.update(newPicamInput());
+  fsm.update(picamLockInput(0.1));
+  fsm.update(picamLockInput(0.5));
+
+  ControlFSMInput input = baseInput();
+  input.has_picam_lock = false;
+  input.has_fresh_webcam_target = true;
+
+  assertOutput(
+      fsm.update(input),
+      TrackingMode::WEBCAM_SEARCH,
+      ControlSource::WEBCAM_DETECTION,
+      true,
+      false);
+}
+
+void testPicamHoldToIdleAfterHoldTimeout() {
+  ControlFSM fsm(testConfig());
+  fsm.update(newPicamInput());
+  fsm.update(picamLockInput(0.1));
+  fsm.update(picamLockInput(0.5));
+
+  ControlFSMInput input = picamLockInput(1.5);
+  input.has_fresh_webcam_target = false;
+
+  assertOutput(
+      fsm.update(input),
+      TrackingMode::IDLE,
+      ControlSource::JOINT_HOLD,
+      true,
+      false);
+}
+
+void testPicamReacquiredDuringHold() {
+  ControlFSM fsm(testConfig());
+  fsm.update(newPicamInput());
+  fsm.update(picamLockInput(0.1));
+  fsm.update(picamLockInput(0.5));
+
+  assertOutput(
+      fsm.update(newPicamInput()),
+      TrackingMode::PICAM_TRACK,
+      ControlSource::PICAM_DETECTION,
+      false,
+      false);
 }
 
 }  // namespace
 
 int main() {
-  testPicamDetectionHasPriority();
-  testPredictionWindow();
-  testHoldWindowAfterPrediction();
-  testWebcamSearchAfterHoldExpires();
-  testIdleWhenNoTarget();
+  testIdleToWebcamSearch();
+  testWebcamSearchToIdleWhenTargetStales();
+  testPicamAcquireHasGlobalPriority();
+  testPicamTrackToPredict();
+  testPicamPredictToHold();
+  testPicamHoldToWebcamSearchAfterLockExpires();
+  testPicamHoldToIdleAfterHoldTimeout();
+  testPicamReacquiredDuringHold();
   return 0;
 }

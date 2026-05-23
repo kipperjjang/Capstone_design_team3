@@ -121,6 +121,13 @@ bool CtrlNode::hasFreshWebcamTarget(double now) const {
   return webcamAge(now) <= controller_->config().webcam_measurement_max_age;
 }
 
+void CtrlNode::expirePicamLock(double now) {
+  if (!has_picam_lock_) return;
+  if (picamAge(now) > controller_->config().picam_track_hold_sec) {
+    has_picam_lock_ = false;
+  }
+}
+
 RobotState CtrlNode::withLatestJoint(RobotState state) const {
   state.joint = joint_;
   state.joint_vel = joint_vel_;
@@ -233,6 +240,8 @@ CtrlNode::ControlTick CtrlNode::holdIdle(double now) {
 
 void CtrlNode::timerCallback() {
   const double now = this->now().seconds();
+  expirePicamLock(now);
+
   const ControlFSMInput fsm_input = buildFSMInput(now);
   const ControlFSMOutput fsm_output = fsm_->update(fsm_input);
   const ControlTick tick = executeMode(fsm_output, now);

@@ -42,11 +42,16 @@ public:
 
   ControlFSMOutput update(const ControlFSMInput &input);
   ControlFSMOutput output() const { return output_; }
+  TrackingMode mode() const { return mode_; }
 
   static const char* trackingModeName(TrackingMode mode);
   static const char* controlSourceName(ControlSource source);
 
 private:
+  ControlFSMOutput outputForMode(TrackingMode mode) const;
+  TrackingMode fallbackMode(const ControlFSMInput &input) const;
+
   ControlConfig config_;
   ControlFSMOutput output_;
+  TrackingMode mode_{TrackingMode::IDLE};
 };

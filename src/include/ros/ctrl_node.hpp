@@ -44,6 +44,7 @@ private:
   void publishDebug(const ControlFSMInput &fsm_input, const ControlFSMOutput &fsm_output, const ControlTick &tick);
   void publishWebcamEnabled(bool enabled);
 
+  void expirePicamLock(double now);
   bool hasNewPicamTarget() const;
   bool hasFreshWebcamTarget(double now) const;
   double picamAge(double now) const;
