@@ -37,6 +37,8 @@ find_package(yaml-cpp REQUIRED)
 # Estimator test library
 set(CAPSTONE_LIBRARY_SOURCES
   src/data/config/estimator_config.cpp
+  src/data/config/control_config.cpp
+  src/controller/fsm.cpp
   src/estimator/estimator.cpp
   src/estimator/kalman_filter.cpp
   src/ros/test_node.cpp
@@ -46,9 +48,7 @@ if(BUILD_FULL_CAPSTONE)
   list(APPEND CAPSTONE_LIBRARY_SOURCES
     src/bridge/serial.cpp
     src/data/config/port_config.cpp
-    src/data/config/control_config.cpp
     src/controller/controller.cpp
-    src/controller/fsm.cpp
     src/ros/bridge_node.cpp
     src/ros/ctrl_node.cpp
   )
@@ -82,6 +82,24 @@ ament_target_dependencies(test_node
   std_msgs
   custom_msgs
 )
+
+add_executable(estimator_sanity_test src/estimator/estimator_sanity_test.cpp)
+target_link_libraries(estimator_sanity_test capstone_library)
+ament_target_dependencies(estimator_sanity_test
+  rclcpp
+  std_msgs
+  custom_msgs
+)
+add_test(NAME estimator_sanity_test COMMAND estimator_sanity_test)
+
+add_executable(control_fsm_sanity_test src/controller/fsm_sanity_test.cpp)
+target_link_libraries(control_fsm_sanity_test capstone_library)
+ament_target_dependencies(control_fsm_sanity_test
+  rclcpp
+  std_msgs
+  custom_msgs
+)
+add_test(NAME control_fsm_sanity_test COMMAND control_fsm_sanity_test)
 
 if(BUILD_FULL_CAPSTONE)
   add_executable(ctrl_node src/ctrl.cpp)

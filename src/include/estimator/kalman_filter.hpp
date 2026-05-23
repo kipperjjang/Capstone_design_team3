@@ -25,7 +25,7 @@ public:
 
 private:
   // Utils
-  void update(const Eigen::VectorXd &z, const Eigen::MatrixXd &H, const Eigen::MatrixXd &R, const Eigen::VectorXd &prior);
+  void update(const Eigen::VectorXd &z, const Eigen::MatrixXd &H, const Eigen::MatrixXd &R);
 
   Eigen::MatrixXd getF(double dt) const;
   Eigen::MatrixXd getQ(double dt) const;

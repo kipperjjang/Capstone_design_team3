@@ -200,7 +200,7 @@ bool BridgeNode::parseReadFrames(std::vector<uint8_t> &buffer) {
 
     // Previous read status check
     previous_read_status_ = true;
-    const bool remote_received_previous_write = buffer[kPrevStatusOffset] != kStatusFailed;
+    const bool remote_received_previous_write = buffer[kPrevStatusOffset] == kStatusOk;
     if (!remote_received_previous_write && !last_write_frame_.empty()) {
       (void)writeFrameToSerial(last_write_frame_);
     }

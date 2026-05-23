@@ -1,46 +1,86 @@
 #include "controller/fsm.hpp"
-#include <iostream>
 
-void FSM::update(const RobotState &state) {
-  const double dt = state.dt;
-  const bool has_target = state.detected || state.tracked;
-  const double err_p = (state.img_center - state.p).norm();
-  const double err_v = state.v.norm();
-  const std::string cam = state.camera;
-  const bool has_picam_target = cam == "picam" && has_target;
+ControlFSMOutput ControlFSM::update(const ControlFSMInput &input) {
+  if (input.has_new_picam_target) {
+    output_ = {
+      TrackingMode::PICAM_TRACK,
+      ControlSource::PICAM_DETECTION,
+      false,
+      false,
+    };
+    return output_;
+  }
 
-  switch (fsm_state_) {
-    case FSMState::SEARCH:
-      // std::cout << "search" << std::endl;
-      if (has_picam_target) {
-        fsm_state_ = FSMState::TRACK;
-      }
-      break;
+  if (input.has_picam_lock && input.estimator_initialized &&
+      input.picam_age <= config_.picam_prediction_max_sec) {
+    output_ = {
+      TrackingMode::PICAM_PREDICT,
+      ControlSource::PICAM_PREDICTION,
+      false,
+      true,
+    };
+    return output_;
+  }
 
-    case FSMState::TRACK:
-      // std::cout << dt << std::endl;
-      if (!has_picam_target && dt > config_.ctrl_max_time_gap) {
-        fsm_state_ = FSMState::SEARCH;
-      }
-      break;
+  if (input.has_picam_lock && input.picam_age <= config_.picam_track_hold_sec) {
+    output_ = {
+      TrackingMode::PICAM_HOLD,
+      ControlSource::JOINT_HOLD,
+      false,
+      false,
+    };
+    return output_;
+  }
 
-    case FSMState::AIM:
-      if (!has_picam_target && dt > config_.max_time_gap) {
-        fsm_state_ = FSMState::SEARCH;
-      } else if (err_p < config_.err_p_fire && err_v < config_.err_v_track) {
-        fsm_state_ = FSMState::RELOAD;
-      } else if (err_p >= config_.err_p_track) {
-        fsm_state_ = FSMState::TRACK;
-      }
-      break;
+  if (input.has_fresh_webcam_target) {
+    output_ = {
+      TrackingMode::WEBCAM_SEARCH,
+      ControlSource::WEBCAM_DETECTION,
+      true,
+      false,
+    };
+    return output_;
+  }
 
-    case FSMState::RELOAD:
-      fsm_state_ = has_picam_target ? FSMState::TRACK : FSMState::SEARCH;
-      break;
+  output_ = {
+    TrackingMode::IDLE,
+    ControlSource::JOINT_HOLD,
+    true,
+    false,
+  };
+  return output_;
+}
 
+const char* ControlFSM::trackingModeName(TrackingMode mode) {
+  switch (mode) {
+    case TrackingMode::IDLE:
+      return "IDLE";
+    case TrackingMode::WEBCAM_SEARCH:
+      return "WEBCAM_SEARCH";
+    case TrackingMode::PICAM_TRACK:
+      return "PICAM_TRACK";
+    case TrackingMode::PICAM_PREDICT:
+      return "PICAM_PREDICT";
+    case TrackingMode::PICAM_HOLD:
+      return "PICAM_HOLD";
     default:
-      std::cout << "search" << std::endl;
-      fsm_state_ = FSMState::SEARCH;
-      break;
+      return "UNKNOWN";
+  }
+}
+
+const char* ControlFSM::controlSourceName(ControlSource source) {
+  switch (source) {
+    case ControlSource::NONE:
+      return "NONE";
+    case ControlSource::WEBCAM_DETECTION:
+      return "WEBCAM_DETECTION";
+    case ControlSource::PICAM_DETECTION:
+      return "PICAM_DETECTION";
+    case ControlSource::PICAM_PREDICTION:
+      return "PICAM_PREDICTION";
+    case ControlSource::JOINT_HOLD:
+      return "JOINT_HOLD";
+    default:
+      return "UNKNOWN";
   }
 }

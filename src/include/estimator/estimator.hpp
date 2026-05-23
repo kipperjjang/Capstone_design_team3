@@ -14,20 +14,24 @@ public:
   void init(const RobotState &state);
 
   void update(const RobotState &state);       // Vision input
-  void update(const double t);                // Process prediction
+  void update(double t);                      // Process prediction compatibility wrapper
   void updateJoint(const Eigen::Vector2d &joint, const Eigen::Vector2d &joint_vel, double t); // Joint update
 
   // Utils
-  RobotState updatedState() const {}                  // KF updated state with last vision measurement
+  RobotState updatedState() const;                    // KF updated state with last vision measurement
+  RobotState correctedState() const;                  // Backward-compatible name for updatedState
   RobotState predictedState(double t) const;          // KF predicted state with absolute time without internal change; data for debug
   RobotState predictedStateFromDt(double dt) const;   // KF predicted state with dt; data for debug
   RobotState predict(double t);                       // KF predict with internal state change
+  const RobotState& getState(bool isProcess);         // Backward-compatible state getter
+  const RobotState& getState(double dt);
   bool isInitialized() const { return initialized_; }
 
   // Configuration
   EstimatorConfig config_;
   
 private:
+  bool hasMeasurement(const RobotState &state) const;
   RobotState attachJointMetadata(RobotState state) const;
   Eigen::Vector2d initialVelocityForMeasurement(const RobotState &state) const;
   RobotState stateFromFilter(const Eigen::VectorXd &x, RobotState metadata, bool process, double t, double dt) const;
@@ -37,6 +41,7 @@ private:
   RobotState updated_state_;
   RobotState predicted_state_;
   RobotState last_measurement_state_;
+  RobotState legacy_state_;
   bool initialized_{false};
   bool has_last_measurement_state_{false};
   bool has_predicted_state_{false};

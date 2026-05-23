@@ -65,7 +65,7 @@ struct RobotState {
       camera = msg->camera;
     }
     detected = msg->detected;
-    tracked = msg->tracked;
+    tracked = false;
   }
 
   void setJoint(const Eigen::Vector2d &j, const Eigen::Vector2d &jv) {
