@@ -4,12 +4,5 @@ std_msgs/Header header
 float32 u_yaw
 float32 u_pitch
 
-# Control input for shooting and reloading
-bool fire
-bool reload
-
-# Is manual message
-bool manual
-
 # Is Pixel
 bool ispixel

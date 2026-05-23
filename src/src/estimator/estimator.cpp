@@ -2,10 +2,6 @@
 
 #include <algorithm>
 
-bool Estimator::hasMeasurement(const RobotState &state) const {
-  return state.detected || state.tracked;
-}
-
 RobotState Estimator::attachJointMetadata(RobotState state) const {
   if (has_latest_joint_) {
     state.joint = latest_joint_;
@@ -21,7 +17,7 @@ Eigen::Vector2d Estimator::initialVelocityForMeasurement(const RobotState &state
 
   if (has_last_measurement_state_) {
     const double dt = state.t - last_measurement_state_.t;
-    if (dt > 0.0 && dt <= config_.max_time_gap && hasMeasurement(last_measurement_state_)) {
+    if (dt > 0.0 && dt <= config_.max_time_gap && last_measurement_state_.detected) {
       return (state.p - last_measurement_state_.p) / dt;
     }
   }
@@ -48,14 +44,13 @@ RobotState Estimator::stateFromFilter(
   state.process = process;
   if (process) {
     state.detected = false;
-    state.tracked = false;
   }
   return state;
 }
 
 void Estimator::init(const RobotState &state) {
   // Initialize estimator
-  if (!hasMeasurement(state)) return;
+  if (!state.detected) return;
 
   const RobotState measurement = attachJointMetadata(state);
   const Eigen::Vector2d initial_velocity = initialVelocityForMeasurement(measurement);
@@ -79,7 +74,7 @@ void Estimator::reset() {
 }
 
 void Estimator::update(const RobotState &state) {
-  if (!hasMeasurement(state)) return;
+  if (!state.detected) return;
 
   // Get current measurement
   const RobotState measurement = attachJointMetadata(state);
@@ -101,14 +96,13 @@ void Estimator::update(const RobotState &state) {
   kf_.predict(dt);
 
   // Update state
-  const double r_position = measurement.detected ? config_.r_detected : config_.r_tracked;
-  kf_.updatePosition(measurement.p, Eigen::Matrix2d::Identity() * r_position);
-  if (measurement.has_velocity) {
-    kf_.updateVelocity(measurement.v, Eigen::Matrix2d::Identity() * config_.r_temp_vel);
-  }
-  if (measurement.has_acceleration) {
-    kf_.updateAcceleration(measurement.a, Eigen::Matrix2d::Identity() * config_.r_temp_acc);
-  }
+  kf_.updatePosition(measurement.p, Eigen::Matrix2d::Identity() * config_.r_pos);
+  // if (measurement.has_velocity) {
+  //   kf_.updateVelocity(measurement.v, Eigen::Matrix2d::Identity() * config_.r_vel);
+  // }
+  // if (measurement.has_acceleration) {
+  //   kf_.updateAcceleration(measurement.a, Eigen::Matrix2d::Identity() * config_.r_acc);
+  // }
 
   updated_state_ = stateFromFilter(kf_.x(), measurement, false, measurement.t, dt);
   predicted_state_ = updated_state_;
@@ -148,10 +142,6 @@ RobotState Estimator::predict(double t) {
   return predicted_state_;
 }
 
-void Estimator::update(double t) {
-  (void)predict(t);
-}
-
 void Estimator::updateJoint(const Eigen::Vector2d &joint, const Eigen::Vector2d &joint_vel, double t) {
   latest_joint_ = joint;
   latest_joint_vel_ = joint_vel;
@@ -166,10 +156,6 @@ void Estimator::updateJoint(const Eigen::Vector2d &joint, const Eigen::Vector2d 
 
 RobotState Estimator::updatedState() const {
   return attachJointMetadata(updated_state_);
-}
-
-RobotState Estimator::correctedState() const {
-  return updatedState();
 }
 
 RobotState Estimator::predictedState(double t) const {
@@ -194,18 +180,4 @@ RobotState Estimator::predictedStateFromDt(double dt) const {
 
   const double clamped_dt = std::max(0.0, dt);
   return stateFromFilter(kf_.predictedState(clamped_dt), updated_state_, true, last_measurement_time_ + clamped_dt, clamped_dt);
-}
-
-const RobotState &Estimator::getState(bool isProcess) {
-  if (isProcess) {
-    legacy_state_ = has_predicted_state_ ? predicted_state_ : predictedStateFromDt(0.0);
-  } else {
-    legacy_state_ = updatedState();
-  }
-  return legacy_state_;
-}
-
-const RobotState &Estimator::getState(double dt) {
-  legacy_state_ = predictedStateFromDt(dt);
-  return legacy_state_;
 }

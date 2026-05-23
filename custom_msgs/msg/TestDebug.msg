@@ -12,14 +12,11 @@ float64 dt
 bool has_raw
 bool estimator_initialized
 bool detected
-bool tracked
 bool predicted_only
 
 bool has_control
 float64 u_yaw
 float64 u_pitch
-bool fire
-bool reload
 
 string tracking_mode
 string control_source

@@ -45,6 +45,9 @@ private:
   void publishWebcamEnabled(bool enabled);
 
   void expirePicamLock(double now);
+  bool isJointHoldMode(TrackingMode mode) const;
+  void updateHoldJointTarget(TrackingMode mode);
+  const Eigen::Vector2d& holdJointTarget() const;
   bool hasNewPicamTarget() const;
   bool hasFreshWebcamTarget(double now) const;
   double picamAge(double now) const;
@@ -63,6 +66,9 @@ private:
   bool first_joint_{false};
   Eigen::Vector2d joint_{Eigen::Vector2d::Zero()};
   Eigen::Vector2d joint_vel_{Eigen::Vector2d::Zero()};
+  Eigen::Vector2d hold_joint_target_{Eigen::Vector2d::Zero()};
+  bool has_hold_joint_target_{false};
+  TrackingMode hold_joint_mode_{TrackingMode::IDLE};
 
   RobotState latest_picam_state_;
   RobotState latest_webcam_state_;

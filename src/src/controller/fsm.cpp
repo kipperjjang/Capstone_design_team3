@@ -1,6 +1,12 @@
 #include "controller/fsm.hpp"
 
+// Check status when failed to track during Picam tracking
+TrackingMode ControlFSM::fallbackMode(const ControlFSMInput &input) const {
+  return input.has_fresh_webcam_target ? TrackingMode::WEBCAM_SEARCH : TrackingMode::IDLE;
+}
+
 ControlFSMOutput ControlFSM::update(const ControlFSMInput &input) {
+  // Prioritize picam tracking
   if (input.has_new_picam_target) {
     mode_ = TrackingMode::PICAM_TRACK;
     output_ = outputForMode(mode_);
@@ -18,12 +24,11 @@ ControlFSMOutput ControlFSM::update(const ControlFSMInput &input) {
 
     case TrackingMode::PICAM_TRACK:
       if (!input.has_picam_lock) {
-        mode_ = fallbackMode(input);
-      } else if (input.estimator_initialized &&
-                 input.picam_age <= config_.picam_prediction_max_sec) {
-        mode_ = TrackingMode::PICAM_PREDICT;
+        mode_ = fallbackMode(input);          // Expired lock time (lock time; tracking holding time)
+      } else if (input.estimator_initialized && input.picam_age <= config_.picam_prediction_max_sec) {
+        mode_ = TrackingMode::PICAM_PREDICT;  // Prediction
       } else if (input.picam_age <= config_.picam_track_hold_sec) {
-        mode_ = TrackingMode::PICAM_HOLD;
+        mode_ = TrackingMode::PICAM_HOLD;     // Holding for YOLO detection
       } else {
         mode_ = fallbackMode(input);
       }
@@ -31,12 +36,11 @@ ControlFSMOutput ControlFSM::update(const ControlFSMInput &input) {
 
     case TrackingMode::PICAM_PREDICT:
       if (!input.has_picam_lock) {
-        mode_ = fallbackMode(input);
-      } else if (input.estimator_initialized &&
-                 input.picam_age <= config_.picam_prediction_max_sec) {
-        mode_ = TrackingMode::PICAM_PREDICT;
+        mode_ = fallbackMode(input);          // Expired lock time
+      } else if (input.estimator_initialized && input.picam_age <= config_.picam_prediction_max_sec) {
+        mode_ = TrackingMode::PICAM_PREDICT;  // Maintain mode
       } else if (input.picam_age <= config_.picam_track_hold_sec) {
-        mode_ = TrackingMode::PICAM_HOLD;
+        mode_ = TrackingMode::PICAM_HOLD;     // Holding for YOLO detection
       } else {
         mode_ = fallbackMode(input);
       }
@@ -65,32 +69,32 @@ ControlFSMOutput ControlFSM::outputForMode(TrackingMode mode) const {
       return {
         TrackingMode::WEBCAM_SEARCH,
         ControlSource::WEBCAM_DETECTION,
-        true,
-        false,
+        true,     // webcam enabled
+        false,    // no prediction
       };
 
     case TrackingMode::PICAM_TRACK:
       return {
         TrackingMode::PICAM_TRACK,
         ControlSource::PICAM_DETECTION,
-        false,
-        false,
+        false,    // webcam disabled
+        false,    // no prediction
       };
 
     case TrackingMode::PICAM_PREDICT:
       return {
         TrackingMode::PICAM_PREDICT,
         ControlSource::PICAM_PREDICTION,
-        false,
-        true,
+        false,    // webcam disabled
+        true,     // prediction
       };
 
     case TrackingMode::PICAM_HOLD:
       return {
         TrackingMode::PICAM_HOLD,
         ControlSource::JOINT_HOLD,
-        false,
-        false,
+        false,    // webcam disabled
+        false,    // no prediction
       };
 
     case TrackingMode::IDLE:
@@ -98,14 +102,10 @@ ControlFSMOutput ControlFSM::outputForMode(TrackingMode mode) const {
       return {
         TrackingMode::IDLE,
         ControlSource::JOINT_HOLD,
-        true,
-        false,
+        true,     // webcam enabled
+        false,    // no prediction
       };
   }
-}
-
-TrackingMode ControlFSM::fallbackMode(const ControlFSMInput &input) const {
-  return input.has_fresh_webcam_target ? TrackingMode::WEBCAM_SEARCH : TrackingMode::IDLE;
 }
 
 const char* ControlFSM::trackingModeName(TrackingMode mode) {

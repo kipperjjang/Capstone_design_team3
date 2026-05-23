@@ -13,15 +13,10 @@ EstimatorConfig EstimatorConfig::load(const std::string &path) {
   
   config.prediction_time = file["estimator"]["prediction_time"].as<double>();
 
-  config.hz = file["controller"]["frequency"].as<double>();
   config.q_acc = kalman["q_acc"].as<double>();
-  config.r_detected = kalman["r_detected"].as<double>();
-  config.r_tracked = kalman["r_tracked"].as<double>();
-  config.r_temp_vel = kalman["r_temp_vel"].as<double>();
-  config.r_temp_acc = kalman["r_temp_acc"].as<double>();
-
-  // config.r_angle = kalman["r_angle"].as<double>();
-  // config.r_omega = kalman["r_omega"].as<double>();
+  config.r_pos = kalman["r_pos"].as<double>();
+  config.r_vel = kalman["r_vel"].as<double>();
+  config.r_acc = kalman["r_acc"].as<double>();
 
   config.p0_pos = kalman["p0_pos"].as<double>();
   config.p0_vel = kalman["p0_vel"].as<double>();

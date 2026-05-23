@@ -1,8 +1,8 @@
 # vision parameters
 vision:
-  weight_confidence:      1.0
-  weight_distance:        0.002
-  max_motion_dt:          0.5
+  weight_confidence:      1.0         # Weight for confidence score; select bbox of high confidence
+  weight_distance:        0.002       # Weight for distance score; select bbox which is closer to the previous detection
+  max_motion_dt:          0.25        # one YOLO loop ~20ms, endure 10 loop gap
 
 # Controller parameters 
 controller:
@@ -15,7 +15,7 @@ controller:
   time_delay:             0.1         # Expected time delay during fire (s)
   picam_prediction_max_sec: 0.25      # Max duration to trust KF prediction after losing picam YOLO
   picam_track_hold_sec:   1.0         # Max duration to hold current joint before webcam handoff
-  webcam_measurement_max_age: 0.3     # Max age of webcam YOLO measurement for search
+  webcam_measurement_max_age: 0.5     # Max age of webcam YOLO measurement for search
 
   err_p_track:            1e-3        # Error threshold for tracking, position  (pixel)
   err_v_track:            1e-3        # Error threshold for tracking, velocity  (pixel/s)
@@ -23,20 +23,17 @@ controller:
 
 # Estimator parameters 
 estimator:
-  prediction_time:        0.0
+  prediction_time:        0.01
 
-  camera:
-    focal_length:         0.01
   kalman:
     q_acc:                1e+5
-    r_detected:           10.0
-    r_tracked:            10.0
-    r_temp_vel:           900
-    r_temp_acc:           54000
-    p0_pos:               10.0
-    p0_vel:               900
-    p0_acc:               54000
-    max_time_gap:         1.0
+    r_pos:                1
+    r_vel:                5000
+    r_acc:                25000000
+    p0_pos:               0.5
+    p0_vel:               2500
+    p0_acc:               12500000
+    max_time_gap:         0.25
 
 # Serial parameters
 bridge:

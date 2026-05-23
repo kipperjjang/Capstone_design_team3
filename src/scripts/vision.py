@@ -169,6 +169,8 @@ class VisionNode(Node):
     self.declare_parameter("vision_topic", "/vision")
     self.declare_parameter("image_topic", "/vision/image")
     self.declare_parameter("enabled_topic", "/vision_webcam/enabled")
+    self.declare_parameter("profile_timing", False)
+    self.declare_parameter("profile_report_interval", 30)
     
     # Initialize ROS Parameters
     self.config_path      = self.get_parameter("config_path").value
@@ -179,6 +181,8 @@ class VisionNode(Node):
     self.vision_topic     = self.get_parameter("vision_topic").value
     self.image_topic      = self.get_parameter("image_topic").value
     self.enabled_topic    = self.get_parameter("enabled_topic").value
+    self.profile_timing   = bool(self.get_parameter("profile_timing").value)
+    self.profile_report_interval = max(1, int(self.get_parameter("profile_report_interval").value))
     
     # Read Confi File
     self.load_config(self.config_path)
@@ -204,6 +208,20 @@ class VisionNode(Node):
     self.img_width  = None
     self.img_center = None
 
+    # Timing profiler state.
+    self.profile_count = 0
+    self.profile_frame_count = 0
+    self.profile_enabled_count = 0
+    self.profile_detected_count = 0
+    self.profile_sums = {
+      "read": 0.0,
+      "detect": 0.0,
+      "publish": 0.0,
+      "image_publish": 0.0,
+      "spin": 0.0,
+      "total": 0.0,
+    }
+
     # Init and Start Camera Reader
     if self.camera_type == 0:
       self.reader = PiCamReader(
@@ -214,7 +232,7 @@ class VisionNode(Node):
           display_width   = 1280,
           display_height  = 720,
           framerate       = 30,
-          flip_method     = 0,
+          flip_method     = 2,
        )
       )
     elif self.camera_type == 1:
@@ -256,8 +274,8 @@ class VisionNode(Node):
       self.img_height, self.img_width = frame.shape[:2]
       self.img_center = np.array([self.img_width, self.img_height], dtype=np.float32) / 2.0
 
-    if self.camera_type == 0:
-      frame = cv2.rotate(frame, cv2.ROTATE_180)
+    # if self.camera_type == 0:
+    #   frame = cv2.rotate(frame, cv2.ROTATE_180)
       # frame = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
 
     self.img = frame
@@ -268,21 +286,25 @@ class VisionNode(Node):
     return np.array([(x1 + x2) / 2.0, (y1 + y2) / 2.0], dtype=np.float32)
 
   def choose_best_box(self, boxes):
-    candidates  = []
     xyxy        = boxes.xyxy.cpu().numpy()
     confidence  = boxes.conf.cpu().numpy()
 
-    for box, conf in zip(xyxy, confidence):
+    best_score = -float("inf")
+    best_idx = 0
+    for idx, (box, conf) in enumerate(zip(xyxy, confidence)):
       center  = self.box_center(box)
 
+      # Compute distance from previous detection
       if self.prev_position is not None:
         distance = np.linalg.norm(center - self.prev_position)
       else:
-        distance = 0
+        distance = 0.0
       score = self.w_conf * conf - self.w_dist * distance
-      candidates.append(score)
-    
-    best_idx = int(np.argmax(np.array(candidates)))
+      
+      # Check score
+      if score > best_score:
+        best_score = score
+        best_idx = idx
     return xyxy[best_idx]
 
   def detect_bell(self):
@@ -377,23 +399,89 @@ class VisionNode(Node):
       image_msg.header.stamp = self.get_clock().now().to_msg()
       self.image_pub.publish(image_msg)
 
+  def timingRow(self, label, value, total):
+    ms = value * 1000.0
+    pct = 100.0 * value / total if total > 1e-9 else 0.0
+    return f"  {label:<13} {ms:7.2f} ms  {pct:5.1f}%"
+
+  def updateTimingProfile(self, timings, frame_read=False, enabled=False, detected=False):
+    if not self.profile_timing:
+      return
+
+    self.profile_count += 1
+    self.profile_frame_count += 1 if frame_read else 0
+    self.profile_enabled_count += 1 if enabled else 0
+    self.profile_detected_count += 1 if detected else 0
+    for key, value in timings.items():
+      self.profile_sums[key] += value
+
+    if self.profile_count < self.profile_report_interval:
+      return
+
+    avg = {
+      key: value / self.profile_count
+      for key, value in self.profile_sums.items()
+    }
+    fps = 1.0 / avg["total"] if avg["total"] > 1e-9 else 0.0
+    camera = "webcam" if self.camera_type else "picam"
+    rows = "\n".join([
+      self.timingRow("total", avg["total"], avg["total"]),
+      self.timingRow("read", avg["read"], avg["total"]),
+      self.timingRow("detect", avg["detect"], avg["total"]),
+      self.timingRow("publish", avg["publish"], avg["total"]),
+      self.timingRow("image_pub", avg["image_publish"], avg["total"]),
+      self.timingRow("spin", avg["spin"], avg["total"]),
+    ])
+    self.get_logger().info(
+      "\n"
+      f"vision timing [{camera}] avg over {self.profile_count} cycles\n"
+      f"  fps={fps:.1f}  "
+      f"frames={self.profile_frame_count}/{self.profile_count}  "
+      f"enabled={self.profile_enabled_count}/{self.profile_count}  "
+      f"detected={self.profile_detected_count}/{self.profile_count}\n"
+      f"{rows}"
+    )
+
+    self.profile_count = 0
+    self.profile_frame_count = 0
+    self.profile_enabled_count = 0
+    self.profile_detected_count = 0
+    for key in self.profile_sums:
+      self.profile_sums[key] = 0.0
+
   def run(self):
     executor = SingleThreadedExecutor()
     executor.add_node(self)
 
     try:
       while rclpy.ok():
+        t0 = time.perf_counter()
         if not self.read_img():
           executor.spin_once(timeout_sec=0.0)
           continue
+
+        t1 = time.perf_counter()
         if not self.enabled:
           self.publishImage()
           executor.spin_once(timeout_sec=0.0)
           continue
+
         self.detect_bell()
+        t2 = time.perf_counter()
         self.publish()
+        t3 = time.perf_counter()
         self.publishImage()
+        t4 = time.perf_counter()
         executor.spin_once(timeout_sec=0.0)
+        t5 = time.perf_counter()
+        self.updateTimingProfile({
+          "read": t1 - t0,
+          "detect": t2 - t1,
+          "publish": t3 - t2,
+          "image_publish": t4 - t3,
+          "spin": t5 - t4,
+          "total": t5 - t0,
+        }, frame_read=True, enabled=True, detected=self.is_detected)
     finally:
       executor.shutdown()
       self.reader.stop()

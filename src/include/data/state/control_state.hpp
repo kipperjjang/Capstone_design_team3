@@ -5,27 +5,23 @@
 struct ControlState {
   double u_yaw{0.0};
   double u_pitch{0.0};
-  bool fire{false};
-  bool reload{false};
   bool isPixel{false};
 
-  void update(const Eigen::Vector2d &u, bool _isPixel, bool _fire, bool _reload) {
+  void update(const Eigen::Vector2d &u, bool _isPixel) {
     u_yaw = u(0);
     u_pitch = u(1);
-    fire = _fire;
-    reload = _reload;
     isPixel = _isPixel;
   }
 
   static ControlState pixel(const Eigen::Vector2d &u) {
     ControlState out;
-    out.update(u, true, false, false);
+    out.update(u, true);
     return out;
   }
 
   static ControlState angle(const Eigen::Vector2d &u) {
     ControlState out;
-    out.update(u, false, false, false);
+    out.update(u, false);
     return out;
   }
 };

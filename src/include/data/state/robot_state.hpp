@@ -38,7 +38,6 @@ struct RobotState {
   bool has_velocity{false};
   bool has_acceleration{false};
   bool detected{false};
-  bool tracked{false};
   bool process{false};
   
   Eigen::Vector2d w{Eigen::Vector2d::Zero()};   // Angular velocity of camera - map into image velocity later
@@ -65,7 +64,6 @@ struct RobotState {
       camera = msg->camera;
     }
     detected = msg->detected;
-    tracked = false;
   }
 
   void setJoint(const Eigen::Vector2d &j, const Eigen::Vector2d &jv) {

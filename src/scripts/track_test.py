@@ -24,7 +24,8 @@ class TrackTest(Node):
     self.declare_parameter('fallback_height', 640)
     self.declare_parameter('view_scale', 0.6)
     self.declare_parameter('history_size', 120)
-    self.declare_parameter('draw_rate_hz', 60.0)
+    self.declare_parameter('hz_window_size', 60)
+    self.declare_parameter('draw_rate_hz', 30.0)
     self.declare_parameter('stale_timeout_sec', 0.5)
     self.declare_parameter('velocity_arrow_scale', 0.05)
     self.declare_parameter('max_arrow_length', 90.0)
@@ -37,6 +38,7 @@ class TrackTest(Node):
     self.fallback_height = int(self.get_parameter('fallback_height').value)
     self.view_scale = float(self.get_parameter('view_scale').value)
     self.history_size = max(2, int(self.get_parameter('history_size').value))
+    self.hz_window_size = max(2, int(self.get_parameter('hz_window_size').value))
     self.draw_rate_hz = float(self.get_parameter('draw_rate_hz').value)
     self.stale_timeout_sec = float(self.get_parameter('stale_timeout_sec').value)
     self.velocity_arrow_scale = float(self.get_parameter('velocity_arrow_scale').value)
@@ -49,6 +51,9 @@ class TrackTest(Node):
     self.latest_image_time = None
     self.latest_vision_time = None
     self.latest_debug_time = None
+    self.image_times = deque(maxlen=self.hz_window_size)
+    self.vision_times = deque(maxlen=self.hz_window_size)
+    self.debug_times = deque(maxlen=self.hz_window_size)
 
     self.yolo_history = deque(maxlen=self.history_size)
     self.estimate_history = deque(maxlen=self.history_size)
@@ -63,19 +68,32 @@ class TrackTest(Node):
   def nowSeconds(self):
     return self.get_clock().now().nanoseconds * 1e-9
 
+  def averageHz(self, timestamps):
+    if len(timestamps) < 2:
+      return 0.0
+
+    elapsed = timestamps[-1] - timestamps[0]
+    if elapsed <= 1e-6:
+      return 0.0
+
+    return (len(timestamps) - 1) / elapsed
+
   def imageCallback(self, msg):
     self.latest_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
     self.latest_image_time = self.nowSeconds()
+    self.image_times.append(self.latest_image_time)
 
   def visionCallback(self, msg):
     self.latest_vision = msg
     self.latest_vision_time = self.nowSeconds()
+    self.vision_times.append(self.latest_vision_time)
     if msg.detected and len(msg.p) >= 2:
       self.yolo_history.append(np.array(msg.p[:2], dtype=float))
 
   def debugCallback(self, msg):
     self.latest_debug = msg
     self.latest_debug_time = self.nowSeconds()
+    self.debug_times.append(self.latest_debug_time)
     if msg.estimator_initialized:
       self.estimate_history.append(np.array(msg.estimated_p, dtype=float))
 
@@ -197,20 +215,20 @@ class TrackTest(Node):
 
   def drawStatus(self, image):
     rows = [
-      ('image', self.latest_image_time, (255, 255, 255)),
-      ('vision', self.latest_vision_time, (0, 220, 0)),
-      ('ctrl debug', self.latest_debug_time, (220, 0, 0)),
+      ('image', self.latest_image_time, self.image_times, (255, 255, 255)),
+      ('vision', self.latest_vision_time, self.vision_times, (0, 220, 0)),
+      ('estimator debug', self.latest_debug_time, self.debug_times, (220, 0, 0)),
     ]
     now = self.nowSeconds()
     y = 26
 
-    for label, timestamp, color in rows:
+    for label, timestamp, timestamps, color in rows:
       if timestamp is None:
         text = f'{label}: waiting'
         text_color = (0, 0, 255)
       else:
         age = now - timestamp
-        hz = 1.0 / age if age > 1e-6 else 0.0
+        hz = self.averageHz(timestamps)
         text = f'{label}: {hz:.1f}Hz'
         text_color = color if age <= self.stale_timeout_sec else (0, 0, 255)
 
@@ -225,14 +243,18 @@ class TrackTest(Node):
         cv2.LINE_AA)
       y += 24
 
-    if self.latest_debug is not None and self.latest_debug.has_control:
-      ctrl = self.latest_debug
-      control_text = (
-        f'u=({(ctrl.u_yaw / np.pi * 180):.4f}, {(ctrl.u_pitch / np.pi * 180):.4f}) '
-        f'fire={ctrl.fire} reload={ctrl.reload}')
+    if self.latest_debug is not None:
+      debug = self.latest_debug
+      mode = getattr(debug, 'tracking_mode', '')
+      source = getattr(debug, 'control_source', '')
+      predicted = bool(getattr(debug, 'predicted_only', False))
+      initialized = bool(getattr(debug, 'estimator_initialized', False))
+      status_text = (
+        f'estimator={initialized} predicted={predicted} '
+        f'dt={float(getattr(debug, "dt", 0.0)):.3f}s')
       cv2.putText(
         image,
-        control_text,
+        status_text,
         (16, y),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.55,
@@ -240,13 +262,40 @@ class TrackTest(Node):
         1,
         cv2.LINE_AA)
       y += 24
-      mode = getattr(ctrl, 'tracking_mode', '')
-      source = getattr(ctrl, 'control_source', '')
-      is_pixel = getattr(ctrl, 'is_pixel', False)
+
       if mode or source:
         cv2.putText(
           image,
-          f'{mode} / {source} pixel={is_pixel}',
+          f'{mode} / {source}',
+          (16, y),
+          cv2.FONT_HERSHEY_SIMPLEX,
+          0.55,
+          (0, 0, 0),
+          1,
+          cv2.LINE_AA)
+        y += 24
+
+      if debug.has_control:
+        u_yaw_deg = float(debug.u_yaw) * 180.0 / np.pi
+        u_pitch_deg = float(debug.u_pitch) * 180.0 / np.pi
+        cv2.putText(
+          image,
+          f'u=({u_yaw_deg:.3f}, {u_pitch_deg:.3f}) deg',
+          (16, y),
+          cv2.FONT_HERSHEY_SIMPLEX,
+          0.55,
+          (0, 0, 0),
+          1,
+          cv2.LINE_AA)
+        y += 24
+
+      if debug.has_raw:
+        raw = np.array(debug.raw_p, dtype=float)
+        estimated = np.array(debug.estimated_p, dtype=float)
+        residual = float(np.linalg.norm(estimated - raw))
+        cv2.putText(
+          image,
+          f'residual={residual:.2f}px',
           (16, y),
           cv2.FONT_HERSHEY_SIMPLEX,
           0.55,
@@ -260,7 +309,7 @@ class TrackTest(Node):
                 cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1, cv2.LINE_AA)
     cv2.putText(image, 'YOLO bbox/center', (170, h - 18),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 220, 0), 1, cv2.LINE_AA)
-    cv2.putText(image, 'ctrl estimate/velocity', (360, h - 18),
+    cv2.putText(image, 'estimator position/velocity', (360, h - 18),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.55, (220, 0, 0), 1, cv2.LINE_AA)
 
   def draw(self):

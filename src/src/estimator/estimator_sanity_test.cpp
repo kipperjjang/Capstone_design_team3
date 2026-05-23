@@ -11,10 +11,9 @@ EstimatorConfig testConfig() {
   EstimatorConfig config{};
   config.hz = 50.0;
   config.q_acc = 1.0;
-  config.r_detected = 1.0;
-  config.r_tracked = 1.0;
-  config.r_temp_vel = 0.01;
-  config.r_temp_acc = 100.0;
+  config.r_pos = 1.0;
+  config.r_vel = 0.01;
+  config.r_acc = 100.0;
   config.p0_pos = 1.0;
   config.p0_vel = 100.0;
   config.p0_acc = 100.0;
@@ -28,7 +27,6 @@ RobotState measurement(double t, const Eigen::Vector2d &p) {
   state.t = t;
   state.p = p;
   state.detected = true;
-  state.tracked = false;
   state.img_center = Eigen::Vector2d(320.0, 240.0);
   state.camera = "picam";
   return state;
@@ -58,16 +56,16 @@ void testPredictionDoesNotMutatePosterior() {
   assert(!near(before.p, predicted.p));
 }
 
-void testUpdatedStateMatchesCorrectedCompatibilityName() {
+void testPredictedStateFromDtMatchesAbsoluteTime() {
   Estimator estimator(testConfig());
   estimator.init(measurementWithVelocity(0.0, Eigen::Vector2d(1.0, 2.0), Eigen::Vector2d(3.0, -1.0)));
 
-  const RobotState updated = estimator.updatedState();
-  const RobotState corrected = estimator.correctedState();
+  const RobotState predicted_by_time = estimator.predictedState(0.5);
+  const RobotState predicted_by_dt = estimator.predictedStateFromDt(0.5);
 
-  assert(near(updated.p, corrected.p));
-  assert(near(updated.v, corrected.v));
-  assert(near(updated.a, corrected.a));
+  assert(near(predicted_by_time.p, predicted_by_dt.p));
+  assert(near(predicted_by_time.v, predicted_by_dt.v));
+  assert(near(predicted_by_time.a, predicted_by_dt.a));
 }
 
 void testPredictionGapHoldsLastPredictedState() {
@@ -119,7 +117,7 @@ void testJointMetadataIsAttached() {
 
 int main() {
   testPredictionDoesNotMutatePosterior();
-  testUpdatedStateMatchesCorrectedCompatibilityName();
+  testPredictedStateFromDtMatchesAbsoluteTime();
   testPredictionGapHoldsLastPredictedState();
   testMissingVelocityDiffersFromZeroVelocityMeasurement();
   testGapReinitializesFromNewMeasurement();

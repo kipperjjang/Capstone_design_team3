@@ -54,7 +54,7 @@ def generate_launch_description():
     condition   = IfCondition(enable_webcam),
     parameters  = [
       {'config_path':     config_path},
-      {'yolo_path':       yolo_webcam},
+      {'yolo_model_path': yolo_webcam},
       {'camera_type':     1},
       {'vision_topic':    '/vision_webcam'},
       {'image_topic':     '/vision_webcam/image'},
@@ -72,7 +72,7 @@ def generate_launch_description():
     condition   = IfCondition(enable_picam),
     parameters  = [
       {'config_path':     config_path},
-      {'yolo_path':       yolo_picam},
+      {'yolo_model_path': yolo_picam},
       {'camera_type':     0},
       {'vision_topic':    '/vision_picam'},
       {'image_topic':     '/vision_picam/image'},
@@ -112,7 +112,7 @@ def generate_launch_description():
   return LaunchDescription([
     DeclareLaunchArgument('enable_debug', default_value='true'),
     DeclareLaunchArgument('publish_image', default_value='true'),
-    DeclareLaunchArgument('enable_webcam', default_value='true'),
+    DeclareLaunchArgument('enable_webcam', default_value='false'),
     DeclareLaunchArgument('enable_picam', default_value='true'),
     bridge_node,
     ctrl_node,
