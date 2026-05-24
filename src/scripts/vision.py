@@ -8,10 +8,11 @@ import time
 from typing import Optional
 from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from ultralytics import YOLO
 
 from custom_msgs.msg import VisionMsg
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import CompressedImage
 from std_msgs.msg import Bool
 
 # from trajectory_utils import load_runtime_config
@@ -207,8 +208,13 @@ class VisionNode(Node):
     self.declare_parameter("camera_type", 0)  # "CSI" : 0 or "WebCAM" : 1
     self.declare_parameter("camera", "")
     self.declare_parameter("vision_topic", "/vision")
-    self.declare_parameter("image_topic", "/vision/image")
+    self.declare_parameter("image_topic", "/vision/image/compressed")
     self.declare_parameter("enabled_topic", "/vision_webcam/enabled")
+    self.declare_parameter("debug_image_width", 960)
+    self.declare_parameter("debug_image_height", 540)
+    self.declare_parameter("debug_image_fps", 10.0)
+    self.declare_parameter("debug_jpeg_quality", 50) # range of the value : 0 ~ 100
+    self.declare_parameter("debug_draw_text", False)
 
     self.config_path = self.get_parameter("config_path").value
     # self.config = load_runtime_config(self.config_path)
@@ -221,6 +227,13 @@ class VisionNode(Node):
     self.vision_topic = self.get_parameter("vision_topic").value
     self.image_topic = self.get_parameter("image_topic").value
     self.enabled_topic = self.get_parameter("enabled_topic").value
+    self.debug_image_width = int(self.get_parameter("debug_image_width").value)
+    self.debug_image_height = int(self.get_parameter("debug_image_height").value)
+    self.debug_image_fps = float(self.get_parameter("debug_image_fps").value)
+    self.debug_jpeg_quality = int(self.get_parameter("debug_jpeg_quality").value)
+    self.debug_draw_text = bool(self.get_parameter("debug_draw_text").value)
+    self.debug_image_period = 1.0 / max(self.debug_image_fps, 1e-6)
+    self.last_debug_image_time = 0.0
     if not self.camera:
       self.camera = "picam" if self.camera_type == 0 else "webcam"
     if self.camera == "picam":
@@ -273,7 +286,12 @@ class VisionNode(Node):
     self.reader.start()
 
     self.state_pub = self.create_publisher(VisionMsg, self.vision_topic, 1)
-    self.image_pub = self.create_publisher(Image, self.image_topic, 1) if self.publish_image else None
+    self.image_qos = QoSProfile(
+        history=HistoryPolicy.KEEP_LAST,
+        depth=1,
+        reliability=ReliabilityPolicy.BEST_EFFORT,
+    )
+    self.image_pub = self.create_publisher(CompressedImage, self.image_topic, self.image_qos) if self.publish_image else None
     self.enabled_sub = None
     if self.camera == "webcam":
       self.enabled_sub = self.create_subscription(Bool, self.enabled_topic, self.enabledCallback, 1)
@@ -331,7 +349,7 @@ class VisionNode(Node):
       return
 
     # confidences = boxes.conf.cpu().numpy()
-    # self.confidence = np.max(confidences) 
+    # self.confidence = np.max(confidences)
     # best_index = int(np.argmax(confidences))
     x1, y1, x2, y2 = boxes.xyxy.cpu().numpy()[0]
     self.box_size = np.abs(np.array([x2 - x1, y2 - y1]))
@@ -361,7 +379,7 @@ class VisionNode(Node):
         # LPF velocity
         self.velocity = a_ *self.velocity + (1-a_) * ((self.position - self.prev_position) / dt).astype(np.float32)
         self.has_velocity = True
-        
+
         if self.prev_velocity is not None:
           # LPF acceleration
           self.acceleration = a_ * self.acceleration + (1-a_) * ((self.velocity - self.prev_velocity) / dt).astype(np.float32)
@@ -401,10 +419,75 @@ class VisionNode(Node):
     self.state_pub.publish(msg)
 
   def publishImage(self):
-    if self.image_pub is not None and self.img is not None:
-      image_msg = self.bridge.cv2_to_imgmsg(self.img, encoding="bgr8")
-      image_msg.header.stamp = self.get_clock().now().to_msg()
-      self.image_pub.publish(image_msg)
+    """Publish an inference result image for remote tuning with minimum delay.
+
+    This method is intentionally called after detect_bell(), so the published image
+    already contains the latest model result. To reduce latency, the frame is first
+    resized to the debug resolution and then the bbox is drawn on the smaller image.
+    """
+    if self.image_pub is None or self.img is None:
+      return
+
+    now_sec = time.time()
+    if now_sec - self.last_debug_image_time < self.debug_image_period:
+      return
+    self.last_debug_image_time = now_sec
+
+    src_h, src_w = self.img.shape[:2]
+
+    if self.debug_image_width > 0 and self.debug_image_height > 0:
+      out_w = self.debug_image_width
+      out_h = self.debug_image_height
+      debug_img = cv2.resize(self.img, (out_w, out_h), interpolation=cv2.INTER_AREA)
+      scale_x = out_w / float(src_w)
+      scale_y = out_h / float(src_h)
+    else:
+      debug_img = self.img
+      out_h, out_w = debug_img.shape[:2]
+      scale_x = 1.0
+      scale_y = 1.0
+
+    if self.is_detected and len(self.position) >= 2 and len(self.box_size) >= 2:
+      cx = int(self.position[0] * scale_x)
+      cy = int(self.position[1] * scale_y)
+      bw = int(self.box_size[0] * scale_x)
+      bh = int(self.box_size[1] * scale_y)
+      x1 = max(0, int(cx - bw * 0.5))
+      y1 = max(0, int(cy - bh * 0.5))
+      x2 = min(out_w - 1, int(cx + bw * 0.5))
+      y2 = min(out_h - 1, int(cy + bh * 0.5))
+
+      cv2.rectangle(debug_img, (x1, y1), (x2, y2), (0, 255, 0), 2)
+      cv2.circle(debug_img, (cx, cy), 4, (0, 0, 255), -1)
+
+      if self.debug_draw_text:
+        cv2.putText(
+            debug_img,
+            f"bell ({cx}, {cy})",
+            (x1, max(18, y1 - 6)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            (0, 255, 0),
+            1,
+            cv2.LINE_AA,
+        )
+
+    if self.img_center is not None:
+      center_x = int(self.img_center[0] * scale_x)
+      center_y = int(self.img_center[1] * scale_y)
+      cv2.line(debug_img, (center_x, 0), (center_x, out_h - 1), (255, 0, 0), 1)
+      cv2.line(debug_img, (0, center_y), (out_w - 1, center_y), (255, 0, 0), 1)
+
+    encode_params = [int(cv2.IMWRITE_JPEG_QUALITY), int(self.debug_jpeg_quality)]
+    success, encoded_img = cv2.imencode(".jpg", debug_img, encode_params)
+    if not success:
+      return
+
+    image_msg = CompressedImage()
+    image_msg.header.stamp = self.get_clock().now().to_msg()
+    image_msg.format = "jpeg"
+    image_msg.data = encoded_img.tobytes()
+    self.image_pub.publish(image_msg)
 
   def run(self):
     executor = SingleThreadedExecutor()
