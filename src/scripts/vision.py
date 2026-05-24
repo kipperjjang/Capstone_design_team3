@@ -192,12 +192,7 @@ class VisionNode(Node):
     self.bridge           = CvBridge()
     self.model            = YOLO(self.yolo_model_path)
     self.position         = np.zeros(2, dtype=np.float32)
-    self.velocity         = np.zeros(2, dtype=np.float32)
-    self.acceleration     = np.zeros(2, dtype=np.float32)
-    self.has_velocity     = False
-    self.has_acceleration = False
     self.prev_position    = None
-    self.prev_velocity    = None
     self.prev_sample_time = None
     self.is_detected      = False
     self.enabled          = True
@@ -252,7 +247,6 @@ class VisionNode(Node):
     vision_config      = data.get("vision", data)
     self.w_conf        = vision_config["weight_confidence"]
     self.w_dist        = vision_config["weight_distance"]
-    self.max_motion_dt = vision_config["max_motion_dt"]
 
   def enabledCallback(self, msg):
     if msg is None:
@@ -261,7 +255,6 @@ class VisionNode(Node):
     self.enabled = bool(msg.data)
     if was_enabled and not self.enabled:
       self.is_detected = False
-      self.reset_motion_estimate()
 
   def read_img(self):
     frame = self.reader.read()
@@ -273,10 +266,6 @@ class VisionNode(Node):
     if self.img_height is None or self.img_width is None:
       self.img_height, self.img_width = frame.shape[:2]
       self.img_center = np.array([self.img_width, self.img_height], dtype=np.float32) / 2.0
-
-    # if self.camera_type == 0:
-    #   frame = cv2.rotate(frame, cv2.ROTATE_180)
-      # frame = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
 
     self.img = frame
     return True
@@ -337,57 +326,16 @@ class VisionNode(Node):
     self.position     = np.array([(x1 + x2) / 2.0, (y1 + y2) / 2.0], dtype=np.float32)
     self.is_detected  = True
 
-  def reset_motion_estimate(self):
-    self.velocity         = np.zeros(2, dtype=np.float32)
-    self.acceleration     = np.zeros(2, dtype=np.float32)
-    self.has_velocity     = False
-    self.has_acceleration = False
-    self.prev_position    = None
-    self.prev_velocity    = None
-    self.prev_sample_time = None
-
-  def update_motion_estimate(self, sample_time):
-    if not self.is_detected:
-      self.reset_motion_estimate()
-      return
-
-    # LPF coefficient
-    a_ = 0.8
-
-    if self.prev_position is not None and self.prev_sample_time is not None:
-      dt = sample_time - self.prev_sample_time
-      if 0.0 < dt <= self.max_motion_dt:
-        self.velocity     = a_ *self.velocity + (1-a_) * ((self.position - self.prev_position) / dt).astype(np.float32)
-        self.has_velocity = True
-        
-        if self.prev_velocity is not None:
-          self.acceleration     = a_ * self.acceleration + (1-a_) * ((self.velocity - self.prev_velocity) / dt).astype(np.float32)
-          self.has_acceleration = True
-        else:
-          self.acceleration     = np.zeros(2, dtype=np.float32)
-          self.has_acceleration = False
-      else:
-        # Violate Safe time Range, Reset
-        self.reset_motion_estimate()
-
-    # Cache data
-    self.prev_position = self.position.copy()
-    self.prev_velocity = self.velocity.copy() if self.has_velocity else None
-    self.prev_sample_time = sample_time
-
   def publish(self):
     now         = self.get_clock().now()
     sample_time = now.nanoseconds * 1e-9
     stamp       = now.to_msg()
-    self.update_motion_estimate(sample_time)
 
     # VisionMsg
     msg               = VisionMsg()
     msg.header.stamp  = stamp
     msg.detected      = self.is_detected
     msg.p             = self.position.tolist()
-    msg.v             = self.velocity.tolist() if self.has_velocity else []
-    msg.a             = self.acceleration.tolist() if self.has_acceleration else []
     msg.bbox          = self.box_size.tolist()
     msg.img_center    = self.img_center.tolist()
     msg.camera = "webcam" if self.camera_type else "picam"

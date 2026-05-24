@@ -191,14 +191,6 @@ class TrackTest(Node):
 
     self.drawPoint(image, point, (0, 180, 0), 'YOLO', (8, -8))
 
-    if len(msg.v) >= 2:
-      self.drawVelocityArrow(
-        image,
-        point,
-        np.array(msg.v[:2], dtype=float),
-        (0, 140, 0),
-        'raw v')
-
   def drawEstimate(self, image):
     msg = self.latest_debug
     if msg is None or msg.tracking_mode not in ('PICAM_TRACK', 'PICAM_HOLD'):
@@ -215,7 +207,7 @@ class TrackTest(Node):
     rows = [
       ('image', self.latest_image_time, self.image_times, (255, 255, 255)),
       ('vision', self.latest_vision_time, self.vision_times, (0, 220, 0)),
-      ('estimator debug', self.latest_debug_time, self.debug_times, (220, 0, 0)),
+      ('debug', self.latest_debug_time, self.debug_times, (220, 0, 0)),
     ]
     now = self.nowSeconds()
     y = 26

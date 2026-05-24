@@ -89,7 +89,7 @@ Eigen::Vector2d computeBellAngle(const RobotState &state, const ControlConfig &c
   // Eigen::Vector2d omega = Jp * state.v + Jj * state.joint_vel;
 
   Eigen::Vector2d out;
-  out << alpha, beta;
+  out << alpha, 4 * beta;
   return out;
 }
 } // namespace
@@ -101,7 +101,6 @@ ControlState Controller::computeWebcamAngleSearch(const RobotState &webcam_state
 ControlState Controller::computePicamPixelTrack(const RobotState &picam_state) const {
   const Eigen::Vector2d img_center = picam_state.img_center + config_.img_offset;
   Eigen::Vector2d u = config_.Kp * (img_center - picam_state.p);
-  u = (M_PI / 180.0) * u;
   return ControlState::pixel(u);
 }
 

@@ -7,6 +7,9 @@
 #include <chrono>
 #include <cstring>
 #include <functional>
+#include <iomanip>
+#include <iostream>
+#include <sstream>
 
 using std::placeholders::_1;
 
@@ -73,6 +76,40 @@ std::vector<uint8_t> makeControlFrame(
 
   frame.push_back(static_cast<uint8_t>(crc & 0xFF));
   frame.push_back(static_cast<uint8_t>((crc >> 8) & 0xFF));
+
+  // std::ostringstream frame_hex;
+  // frame_hex << std::hex << std::setfill('0');
+  // for (const uint8_t byte : frame) {
+  //   frame_hex << "0x" << std::setw(2) << static_cast<int>(byte) << ' ';
+  // }
+
+  // float decoded_yaw = 0.0F;
+  // float decoded_pitch = 0.0F;
+  // std::memcpy(&decoded_yaw, frame.data() + kHeaderSize, sizeof(decoded_yaw));
+  // std::memcpy(&decoded_pitch, frame.data() + kHeaderSize + sizeof(decoded_yaw), sizeof(decoded_pitch));
+
+  // uint16_t decoded_crc = 0;
+  // std::memcpy(&decoded_crc, frame.data() + frame.size() - kCrcSize, sizeof(decoded_crc));
+  // const uint16_t decoded_computed_crc = crc16Ccitt(frame.data() + kSof.size(), frame.size() - kSof.size() - kCrcSize);
+  // const uint8_t decoded_flags = frame[kHeaderSize + sizeof(decoded_yaw) + sizeof(decoded_pitch)];
+  // const bool decoded_ispixel = (decoded_flags & 0x01) == 0;
+
+  // std::cout << std::dec << std::setprecision(6)
+  //           << "[makeControlFrame]\n"
+  //           << "  decoded_sof: 0x" << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(frame[0])
+  //           << " 0x" << std::setw(2) << static_cast<int>(frame[1]) << std::dec << '\n'
+  //           << "  decoded_previous_read_status: " << (frame[kPrevStatusOffset] == kStatusOk ? "OK" : "FAILED") << '\n'
+  //           << "  decoded_payload_size: " << static_cast<int>(frame[kLenOffset]) << '\n'
+  //           << "  decoded_seq: " << static_cast<int>(frame[kSeqOffset]) << '\n'
+  //           << "  decoded_u_yaw: " << decoded_yaw << '\n'
+  //           << "  decoded_u_pitch: " << decoded_pitch << '\n'
+  //           << "  decoded_flags: 0x" << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(decoded_flags) << std::dec << '\n'
+  //           << "  decoded_ispixel: " << decoded_ispixel << '\n'
+  //           << "  decoded_crc: 0x" << std::hex << std::setw(4) << std::setfill('0') << decoded_crc << '\n'
+  //           << "  recomputed_crc: 0x" << std::setw(4) << decoded_computed_crc << std::dec << '\n'
+  //           << "  crc_ok: " << (decoded_crc == decoded_computed_crc) << '\n'
+  //           << "  frame_size: " << frame.size() << '\n'
+  //           << "  frame: " << frame_hex.str() << std::endl;
   return frame;
 }
 

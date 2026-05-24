@@ -200,6 +200,29 @@ RobotState CtrlNode::reusablePicamState(double now) const {
   return state;
 }
 
+// Eigen::Vector2d CtrlNode::webcamSearchOffset(double now) const {
+//   const ControlConfig &config = controller_->config();
+//   const double half_angle = (M_PI / 180) * config.webcam_search_box_half_angle_deg;
+
+//   const double requested_step = (M_PI / 180) * config.webcam_search_box_step_deg;
+//   const int half_steps = std::max(1, static_cast<int>(std::ceil(half_angle / requested_step)));
+//   const double step = half_angle / static_cast<double>(half_steps);
+  
+//   std::vector<Eigen::Vector2d> pattern;
+//   pattern:reserve(static_cast<size_t>((2 * half_steps + 1) * (2 * half_steps + 1)));
+//   pattern.push_back(Eigen::Vector2d::Zero());
+//   for (int pitch_idx = -half_steps; pitch_idx <= half_steps; ++pitch_idx) {
+//     for (int yaw_idx = -half_steps; yaw_idx <= half_steps; ++yaw_idx) {
+//       if (yaw_idx == 0 && pitch_idx == 0) {
+//         continue;
+//       }
+//     }
+//     pattern.emplace_back(static_cast<double>(yaw_idx) * step, static_cast<double>(pitch) * step);
+//   }
+
+// }
+
+
 ControlFSMInput CtrlNode::buildFSMInput(double now) const {
   ControlFSMInput input;
   input.has_fresh_picam_target = hasFreshPicamTarget(now);
