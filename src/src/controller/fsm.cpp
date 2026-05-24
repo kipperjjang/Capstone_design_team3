@@ -7,7 +7,7 @@ TrackingMode ControlFSM::fallbackMode(const ControlFSMInput &input) const {
 
 ControlFSMOutput ControlFSM::update(const ControlFSMInput &input) {
   // Prioritize picam tracking
-  if (input.has_new_picam_target) {
+  if (input.has_fresh_picam_target) {
     mode_ = TrackingMode::PICAM_TRACK;
     output_ = outputForMode(mode_);
     return output_;
@@ -25,20 +25,8 @@ ControlFSMOutput ControlFSM::update(const ControlFSMInput &input) {
     case TrackingMode::PICAM_TRACK:
       if (!input.has_picam_lock) {
         mode_ = fallbackMode(input);          // Expired lock time (lock time; tracking holding time)
-      } else if (input.estimator_initialized && input.picam_age <= config_.picam_prediction_max_sec) {
-        mode_ = TrackingMode::PICAM_PREDICT;  // Prediction
-      } else if (input.picam_age <= config_.picam_track_hold_sec) {
-        mode_ = TrackingMode::PICAM_HOLD;     // Holding for YOLO detection
-      } else {
-        mode_ = fallbackMode(input);
-      }
-      break;
-
-    case TrackingMode::PICAM_PREDICT:
-      if (!input.has_picam_lock) {
-        mode_ = fallbackMode(input);          // Expired lock time
-      } else if (input.estimator_initialized && input.picam_age <= config_.picam_prediction_max_sec) {
-        mode_ = TrackingMode::PICAM_PREDICT;  // Maintain mode
+      } else if (input.picam_age <= config_.picam_track_reuse_sec) {
+        mode_ = TrackingMode::PICAM_TRACK;    // Reuse last filtered YOLO briefly
       } else if (input.picam_age <= config_.picam_track_hold_sec) {
         mode_ = TrackingMode::PICAM_HOLD;     // Holding for YOLO detection
       } else {
@@ -70,23 +58,13 @@ ControlFSMOutput ControlFSM::outputForMode(TrackingMode mode) const {
         TrackingMode::WEBCAM_SEARCH,
         ControlSource::WEBCAM_DETECTION,
         true,     // webcam enabled
-        false,    // no prediction
       };
 
     case TrackingMode::PICAM_TRACK:
       return {
         TrackingMode::PICAM_TRACK,
-        ControlSource::PICAM_DETECTION,
+        ControlSource::PICAM_MEASUREMENT,
         false,    // webcam disabled
-        false,    // no prediction
-      };
-
-    case TrackingMode::PICAM_PREDICT:
-      return {
-        TrackingMode::PICAM_PREDICT,
-        ControlSource::PICAM_PREDICTION,
-        false,    // webcam disabled
-        true,     // prediction
       };
 
     case TrackingMode::PICAM_HOLD:
@@ -94,7 +72,6 @@ ControlFSMOutput ControlFSM::outputForMode(TrackingMode mode) const {
         TrackingMode::PICAM_HOLD,
         ControlSource::JOINT_HOLD,
         false,    // webcam disabled
-        false,    // no prediction
       };
 
     case TrackingMode::IDLE:
@@ -103,7 +80,6 @@ ControlFSMOutput ControlFSM::outputForMode(TrackingMode mode) const {
         TrackingMode::IDLE,
         ControlSource::JOINT_HOLD,
         true,     // webcam enabled
-        false,    // no prediction
       };
   }
 }
@@ -116,8 +92,6 @@ const char* ControlFSM::trackingModeName(TrackingMode mode) {
       return "WEBCAM_SEARCH";
     case TrackingMode::PICAM_TRACK:
       return "PICAM_TRACK";
-    case TrackingMode::PICAM_PREDICT:
-      return "PICAM_PREDICT";
     case TrackingMode::PICAM_HOLD:
       return "PICAM_HOLD";
     default:
@@ -131,10 +105,8 @@ const char* ControlFSM::controlSourceName(ControlSource source) {
       return "NONE";
     case ControlSource::WEBCAM_DETECTION:
       return "WEBCAM_DETECTION";
-    case ControlSource::PICAM_DETECTION:
-      return "PICAM_DETECTION";
-    case ControlSource::PICAM_PREDICTION:
-      return "PICAM_PREDICTION";
+    case ControlSource::PICAM_MEASUREMENT:
+      return "PICAM_MEASUREMENT";
     case ControlSource::JOINT_HOLD:
       return "JOINT_HOLD";
     default:

@@ -2,7 +2,6 @@
 vision:
   weight_confidence:      1.0         # Weight for confidence score; select bbox of high confidence
   weight_distance:        0.002       # Weight for distance score; select bbox which is closer to the previous detection
-  max_motion_dt:          0.25        # one YOLO loop ~20ms, endure 10 loop gap
 
 # Controller parameters 
 controller:
@@ -13,27 +12,12 @@ controller:
   
   frequency:              50        # Frequency of the control node
   time_delay:             0.1         # Expected time delay during fire (s)
-  picam_prediction_max_sec: 0.25      # Max duration to trust KF prediction after losing picam YOLO
+  picam_track_reuse_sec:  0.25        # Max duration to reuse last filtered picam YOLO pixel
   picam_track_hold_sec:   1.0         # Max duration to hold current joint before webcam handoff
   webcam_measurement_max_age: 0.5     # Max age of webcam YOLO measurement for search
-
-  err_p_track:            1e-3        # Error threshold for tracking, position  (pixel)
-  err_v_track:            1e-3        # Error threshold for tracking, velocity  (pixel/s)
-  err_p_fire:             1e-3        # Error threshold for aim, position       (pixel)
-
-# Estimator parameters 
-estimator:
-  prediction_time:        0.01
-
-  kalman:
-    q_acc:                1e+5
-    r_pos:                1
-    r_vel:                5000
-    r_acc:                25000000
-    p0_pos:               0.5
-    p0_vel:               2500
-    p0_acc:               12500000
-    max_time_gap:         0.25
+  picam_lpf_enabled:      true        # Smooth picam YOLO pixel jitter before pixel control
+  picam_lpf_alpha:        0.5         # filtered = alpha * previous + (1-alpha) * measurement
+  picam_lpf_reset_gap_sec: 0.25       # Reset LPF after long picam detection gap
 
 # Serial parameters
 bridge:

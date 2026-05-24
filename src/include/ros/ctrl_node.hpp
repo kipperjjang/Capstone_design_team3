@@ -12,7 +12,6 @@
 #include "custom_msgs/msg/joint_msg.hpp"
 #include "custom_msgs/msg/test_debug.hpp"
 #include "custom_msgs/msg/vision_msg.hpp"
-#include "estimator/estimator.hpp"
 #include "std_msgs/msg/bool.hpp"
 
 class CtrlNode : public rclcpp::Node {
@@ -24,21 +23,24 @@ private:
     RobotState state;
     RobotState raw_state;
     ControlState control;
-    bool has_raw{false};
+    bool has_raw_sample{false};
     double source_age{std::numeric_limits<double>::infinity()};
   };
 
+  // Callback functions
   void visionCallback(const custom_msgs::msg::VisionMsg::SharedPtr msg);
   void jointCallback(const custom_msgs::msg::JointMsg::SharedPtr msg);
   void timerCallback();
 
+  // Utils
   ControlFSMInput buildFSMInput(double now) const;
   ControlTick executeMode(const ControlFSMOutput &fsm_output, double now);
   ControlTick trackPicam(double now);
-  ControlTick predictPicam(double now, double picam_age);
   ControlTick holdPicam(double now, double picam_age);
   ControlTick searchWebcam(double now);
   ControlTick holdIdle(double now);
+  RobotState filterPicamMeasurement(const RobotState &measurement);
+  RobotState reusablePicamState(double now) const;
 
   void publishControl(const ControlState &control);
   void publishDebug(const ControlFSMInput &fsm_input, const ControlFSMOutput &fsm_output, const ControlTick &tick);
@@ -49,11 +51,14 @@ private:
   void updateHoldJointTarget(TrackingMode mode);
   const Eigen::Vector2d& holdJointTarget() const;
   bool hasNewPicamTarget() const;
+  bool hasFreshPicamTarget(double now) const;
   bool hasFreshWebcamTarget(double now) const;
   double picamAge(double now) const;
   double webcamAge(double now) const;
   RobotState withLatestJoint(RobotState state) const;
+  bool shouldPublishControl(const ControlFSMOutput &fsm_output) const;
 
+  // ROS
   rclcpp::Subscription<custom_msgs::msg::VisionMsg>::SharedPtr vision_sub_;
   rclcpp::Subscription<custom_msgs::msg::VisionMsg>::SharedPtr vision_webcam_sub_;
   rclcpp::Subscription<custom_msgs::msg::VisionMsg>::SharedPtr vision_picam_sub_;
@@ -63,6 +68,7 @@ private:
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr webcam_enabled_pub_;
   rclcpp::TimerBase::SharedPtr timer_;
 
+  // Joint
   bool first_joint_{false};
   Eigen::Vector2d joint_{Eigen::Vector2d::Zero()};
   Eigen::Vector2d joint_vel_{Eigen::Vector2d::Zero()};
@@ -70,17 +76,16 @@ private:
   bool has_hold_joint_target_{false};
   TrackingMode hold_joint_mode_{TrackingMode::IDLE};
 
+  // Detection
   RobotState latest_picam_state_;
   RobotState latest_webcam_state_;
   bool has_latest_picam_state_{false};
   bool has_latest_webcam_state_{false};
-  double latest_picam_receive_time_{0.0};
-  double latest_webcam_receive_time_{0.0};
-  double last_processed_picam_target_receive_time_{0.0};
-  double last_picam_target_time_{0.0};
+  double last_consumed_picam_time_{0.0};
   bool has_picam_lock_{false};
+  RobotState filtered_picam_state_;
+  bool has_filtered_picam_state_{false};
 
-  std::unique_ptr<Estimator> estimator_;
   std::unique_ptr<Controller> controller_;
   std::unique_ptr<ControlFSM> fsm_;
 };

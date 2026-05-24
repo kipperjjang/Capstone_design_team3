@@ -102,19 +102,19 @@ class VisionTest(Node):
     sample_time = float(msg.sample_time)
     rel_time = self.relativeTime(sample_time)
 
-    if msg.has_raw:
+    if msg.detected:
       raw_point = np.array(msg.raw_p, dtype=float)
       raw_sample = (sample_time, rel_time, raw_point)
       self.raw_samples.append(raw_sample)
       self.raw_history.append(raw_sample)
 
-    if msg.estimator_initialized:
-      estimated_point = np.array(msg.estimated_p, dtype=float)
+    if msg.tracking_mode in ('PICAM_TRACK', 'PICAM_HOLD'):
+      estimated_point = np.array(msg.filtered_p, dtype=float)
       estimated_sample = (
         sample_time,
         rel_time,
         estimated_point,
-        bool(msg.predicted_only))
+        False)
       self.estimated_samples.append(estimated_sample)
       self.estimated_history.append(estimated_sample)
 
@@ -137,9 +137,7 @@ class VisionTest(Node):
     rclpy.shutdown()
 
   def estimatedLineSamples(self, samples):
-    if self.draw_prediction_included:
-      return list(samples)
-    return [sample for sample in samples if not sample[3]]
+    return list(samples)
 
   def sampleArrays(self, samples, has_prediction_flag=False):
     if not samples:
@@ -164,7 +162,7 @@ class VisionTest(Node):
 
     if len(estimated_points) > 0:
       ax.plot(estimated_points[:, 0], estimated_points[:, 1],
-              color='tab:blue', linewidth=2.2, label='estimated state')
+              color='tab:blue', linewidth=2.2, label='filtered position')
 
     if len(prediction_points) > 0:
       ax.scatter(prediction_points[:, 0], prediction_points[:, 1],
@@ -193,7 +191,7 @@ class VisionTest(Node):
 
     if len(estimated_points) > 0:
       ax.plot(estimated_times, estimated_points[:, axis_index],
-              color='tab:blue', linewidth=2.0, label='estimated state')
+              color='tab:blue', linewidth=2.0, label='filtered position')
 
     if len(prediction_points) > 0:
       ax.scatter(prediction_times, prediction_points[:, axis_index],
@@ -211,8 +209,7 @@ class VisionTest(Node):
     raw_times, raw_points = self.sampleArrays(self.raw_samples)
     line_samples = self.estimatedLineSamples(self.estimated_samples)
     estimated_times, estimated_points = self.sampleArrays(line_samples, True)
-    prediction_samples = [sample for sample in self.estimated_samples if sample[3]]
-    prediction_times, prediction_points = self.sampleArrays(prediction_samples, True)
+    prediction_times, prediction_points = self.sampleArrays([], True)
 
     fig, axes = plt.subplots(1, 3, figsize=(17, 5.5))
     fig.subplots_adjust(top=0.78, wspace=0.28)
@@ -256,7 +253,7 @@ class VisionTest(Node):
         loc='upper center',
         bbox_to_anchor=(0.5, 0.92),
         frameon=False)
-    fig.suptitle('Vision / Kalman Trajectory Summary', fontsize=14, y=0.99)
+    fig.suptitle('Vision / Filtered Trajectory Summary', fontsize=14, y=0.99)
     plt.show()
 
   def getFixedBounds(self):
@@ -319,13 +316,8 @@ class VisionTest(Node):
     filtered_points = [
       (int(round(sample[2][0])), int(round(sample[2][1])))
       for sample in self.estimated_history
-      if self.draw_prediction_included or not sample[3]
     ]
-    prediction_points = [
-      (int(round(sample[2][0])), int(round(sample[2][1])))
-      for sample in self.estimated_history
-      if sample[3]
-    ]
+    prediction_points = []
 
     self.drawPolyline(image, raw_points, (0, 180, 0), 1)
     self.drawPolyline(image, filtered_points, (255, 0, 0), 2)
@@ -335,16 +327,10 @@ class VisionTest(Node):
       self.drawOverlayPoint(image, self.raw_history[-1][2], (0, 180, 0), 'raw', (8, -8))
 
     latest_filtered = next(
-      (sample for sample in reversed(self.estimated_history) if not sample[3]),
+      (sample for sample in reversed(self.estimated_history)),
       None)
     if latest_filtered is not None:
-      self.drawOverlayPoint(image, latest_filtered[2], (255, 0, 0), 'est', (8, 16))
-
-    latest_prediction = next(
-      (sample for sample in reversed(self.estimated_history) if sample[3]),
-      None)
-    if latest_prediction is not None:
-      self.drawOverlayPoint(image, latest_prediction[2], (0, 0, 255), 'pred', (8, 36))
+      self.drawOverlayPoint(image, latest_filtered[2], (255, 0, 0), 'filtered', (8, 16))
 
     return image
 
@@ -387,13 +373,8 @@ class VisionTest(Node):
     estimated_pixels = [
       self.toPanelPixel(sample[2], min_xy, max_xy, rect)
       for sample in self.estimated_history
-      if self.draw_prediction_included or not sample[3]
     ]
-    prediction_pixels = [
-      self.toPanelPixel(sample[2], min_xy, max_xy, rect)
-      for sample in self.estimated_history
-      if sample[3]
-    ]
+    prediction_pixels = []
 
     self.drawPolyline(canvas, raw_pixels, (0, 180, 0), 1)
     self.drawPolyline(canvas, estimated_pixels, (255, 0, 0), 2)
@@ -419,10 +400,8 @@ class VisionTest(Node):
   def drawLegend(self, canvas):
     cv2.putText(canvas, 'raw vision', (24, 30), cv2.FONT_HERSHEY_SIMPLEX,
                 0.6, (0, 150, 0), 2, cv2.LINE_AA)
-    cv2.putText(canvas, 'estimated state', (24, 56), cv2.FONT_HERSHEY_SIMPLEX,
+    cv2.putText(canvas, 'filtered position', (24, 56), cv2.FONT_HERSHEY_SIMPLEX,
                 0.6, (255, 0, 0), 2, cv2.LINE_AA)
-    cv2.putText(canvas, 'prediction only', (24, 82), cv2.FONT_HERSHEY_SIMPLEX,
-                0.6, (0, 0, 255), 2, cv2.LINE_AA)
     cv2.putText(canvas, 'mode: realtime', (250, 30), cv2.FONT_HERSHEY_SIMPLEX,
                 0.55, (70, 70, 70), 1, cv2.LINE_AA)
     cv2.putText(canvas, 'q / Esc: quit', (250, 56), cv2.FONT_HERSHEY_SIMPLEX,
@@ -442,9 +421,8 @@ class VisionTest(Node):
     raw_samples = list(self.raw_history)
     estimated_samples = [
       sample for sample in self.estimated_history
-      if self.draw_prediction_included or not sample[3]
     ]
-    prediction_samples = [sample for sample in self.estimated_history if sample[3]]
+    prediction_samples = []
     all_samples = raw_samples + estimated_samples + prediction_samples
 
     if not all_samples:

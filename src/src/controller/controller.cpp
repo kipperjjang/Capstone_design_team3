@@ -100,7 +100,7 @@ ControlState Controller::computeWebcamAngleSearch(const RobotState &webcam_state
 
 ControlState Controller::computePicamPixelTrack(const RobotState &picam_state) const {
   const Eigen::Vector2d img_center = picam_state.img_center + config_.img_offset;
-  Eigen::Vector2d u = config_.Kp * (img_center - picam_state.p) - config_.Kd * picam_state.v;
+  Eigen::Vector2d u = config_.Kp * (img_center - picam_state.p);
   u = (M_PI / 180.0) * u;
   return ControlState::pixel(u);
 }

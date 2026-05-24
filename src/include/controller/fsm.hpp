@@ -8,22 +8,19 @@ enum class TrackingMode {
   IDLE,
   WEBCAM_SEARCH,
   PICAM_TRACK,
-  PICAM_PREDICT,
   PICAM_HOLD,
 };
 
 enum class ControlSource {
   NONE,
   WEBCAM_DETECTION,
-  PICAM_DETECTION,
-  PICAM_PREDICTION,
+  PICAM_MEASUREMENT,
   JOINT_HOLD,
 };
 
 struct ControlFSMInput {
-  bool has_new_picam_target{false};
+  bool has_fresh_picam_target{false};
   bool has_picam_lock{false};
-  bool estimator_initialized{false};
   bool has_fresh_webcam_target{false};
   double picam_age{std::numeric_limits<double>::infinity()};
   double webcam_age{std::numeric_limits<double>::infinity()};
@@ -33,7 +30,6 @@ struct ControlFSMOutput {
   TrackingMode mode{TrackingMode::IDLE};
   ControlSource source{ControlSource::NONE};
   bool webcam_enabled{true};
-  bool predicted_only{false};
 };
 
 class ControlFSM {

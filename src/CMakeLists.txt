@@ -23,19 +23,15 @@ find_package(Eigen3 REQUIRED)
 find_package(yaml-cpp REQUIRED)
 
 # ------------------------------------------------------------------------------ #
-# Estimator test library
+# Core library
 set(CAPSTONE_LIBRARY_SOURCES
-  src/data/config/estimator_config.cpp
   src/data/config/control_config.cpp
   src/data/config/port_config.cpp
   src/bridge/serial.cpp
-  src/estimator/estimator.cpp
-  src/estimator/kalman_filter.cpp
   src/controller/fsm.cpp
   src/controller/controller.cpp
   src/ros/bridge_node.cpp
   src/ros/ctrl_node.cpp
-  src/ros/test_node.cpp
 )
 
 add_library(capstone_library ${CAPSTONE_LIBRARY_SOURCES})
@@ -58,24 +54,6 @@ ament_target_dependencies(capstone_library
 )
 
 # ------------------------------------------------------------------------------ #
-# Test executable
-add_executable(test_node src/test.cpp)
-target_link_libraries(test_node capstone_library)
-ament_target_dependencies(test_node
-  rclcpp
-  std_msgs
-  custom_msgs
-)
-
-add_executable(estimator_sanity_test src/estimator/estimator_sanity_test.cpp)
-target_link_libraries(estimator_sanity_test capstone_library)
-ament_target_dependencies(estimator_sanity_test
-  rclcpp
-  std_msgs
-  custom_msgs
-)
-add_test(NAME estimator_sanity_test COMMAND estimator_sanity_test)
-
 add_executable(control_fsm_sanity_test src/controller/fsm_sanity_test.cpp)
 target_link_libraries(control_fsm_sanity_test capstone_library)
 ament_target_dependencies(control_fsm_sanity_test
@@ -110,7 +88,6 @@ install(TARGETS
   capstone_library
   ctrl_node
   bridge_node
-  test_node
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -125,7 +102,6 @@ install(PROGRAMS
   scripts/vision_covariance.py
   scripts/prev_test/vision_test.py
   scripts/prev_test/test_visualizer.py
-  scripts/prev_test/test_kalman_evo.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

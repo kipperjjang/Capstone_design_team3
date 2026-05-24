@@ -201,15 +201,15 @@ class KalmanEvoVisualizer(Node):
     sample_time = float(msg.sample_time)
     rel_time = sample_time - self.synthetic_abs_origin
 
-    if msg.estimator_initialized and -0.01 <= rel_time <= self.sample_duration_sec + 0.01:
+    if msg.tracking_mode in ('PICAM_TRACK', 'PICAM_HOLD') and -0.01 <= rel_time <= self.sample_duration_sec + 0.01:
       self.appendKalmanSample(
         sample_time,
         rel_time,
-        np.array(msg.estimated_p, dtype=float),
-        bool(msg.predicted_only))
+        np.array(msg.filtered_p, dtype=float),
+        False)
 
     if (
-      msg.has_raw
+      msg.detected
       and self.last_published_stamp is not None
       and sample_time >= self.last_published_stamp - 1e-6
     ):

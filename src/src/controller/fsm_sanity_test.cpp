@@ -6,7 +6,7 @@ namespace {
 
 ControlConfig testConfig() {
   ControlConfig config;
-  config.picam_prediction_max_sec = 0.25;
+  config.picam_track_reuse_sec = 0.25;
   config.picam_track_hold_sec = 1.0;
   return config;
 }
@@ -20,9 +20,8 @@ ControlFSMInput baseInput() {
 
 ControlFSMInput newPicamInput() {
   ControlFSMInput input = baseInput();
-  input.has_new_picam_target = true;
+  input.has_fresh_picam_target = true;
   input.has_picam_lock = true;
-  input.estimator_initialized = true;
   input.picam_age = 0.0;
   return input;
 }
@@ -30,7 +29,6 @@ ControlFSMInput newPicamInput() {
 ControlFSMInput picamLockInput(double picam_age) {
   ControlFSMInput input = baseInput();
   input.has_picam_lock = true;
-  input.estimator_initialized = true;
   input.picam_age = picam_age;
   return input;
 }
@@ -39,12 +37,10 @@ void assertOutput(
     const ControlFSMOutput &output,
     TrackingMode mode,
     ControlSource source,
-    bool webcam_enabled,
-    bool predicted_only) {
+    bool webcam_enabled) {
   assert(output.mode == mode);
   assert(output.source == source);
   assert(output.webcam_enabled == webcam_enabled);
-  assert(output.predicted_only == predicted_only);
 }
 
 void testIdleToWebcamSearch() {
@@ -56,8 +52,7 @@ void testIdleToWebcamSearch() {
       fsm.update(input),
       TrackingMode::WEBCAM_SEARCH,
       ControlSource::WEBCAM_DETECTION,
-      true,
-      false);
+      true);
   assert(fsm.mode() == TrackingMode::WEBCAM_SEARCH);
 }
 
@@ -71,8 +66,7 @@ void testWebcamSearchToIdleWhenTargetStales() {
       fsm.update(baseInput()),
       TrackingMode::IDLE,
       ControlSource::JOINT_HOLD,
-      true,
-      false);
+      true);
 }
 
 void testPicamAcquireHasGlobalPriority() {
@@ -84,24 +78,22 @@ void testPicamAcquireHasGlobalPriority() {
   assertOutput(
       fsm.update(newPicamInput()),
       TrackingMode::PICAM_TRACK,
-      ControlSource::PICAM_DETECTION,
-      false,
+      ControlSource::PICAM_MEASUREMENT,
       false);
 }
 
-void testPicamTrackToPredict() {
+void testPicamTrackReusesRecentMeasurement() {
   ControlFSM fsm(testConfig());
   fsm.update(newPicamInput());
 
   assertOutput(
       fsm.update(picamLockInput(0.1)),
-      TrackingMode::PICAM_PREDICT,
-      ControlSource::PICAM_PREDICTION,
-      false,
-      true);
+      TrackingMode::PICAM_TRACK,
+      ControlSource::PICAM_MEASUREMENT,
+      false);
 }
 
-void testPicamPredictToHold() {
+void testPicamTrackToHoldAfterReuseWindow() {
   ControlFSM fsm(testConfig());
   fsm.update(newPicamInput());
   fsm.update(picamLockInput(0.1));
@@ -110,7 +102,6 @@ void testPicamPredictToHold() {
       fsm.update(picamLockInput(0.5)),
       TrackingMode::PICAM_HOLD,
       ControlSource::JOINT_HOLD,
-      false,
       false);
 }
 
@@ -128,8 +119,7 @@ void testPicamHoldToWebcamSearchAfterLockExpires() {
       fsm.update(input),
       TrackingMode::WEBCAM_SEARCH,
       ControlSource::WEBCAM_DETECTION,
-      true,
-      false);
+      true);
 }
 
 void testPicamHoldToIdleAfterHoldTimeout() {
@@ -145,8 +135,7 @@ void testPicamHoldToIdleAfterHoldTimeout() {
       fsm.update(input),
       TrackingMode::IDLE,
       ControlSource::JOINT_HOLD,
-      true,
-      false);
+      true);
 }
 
 void testPicamReacquiredDuringHold() {
@@ -158,8 +147,7 @@ void testPicamReacquiredDuringHold() {
   assertOutput(
       fsm.update(newPicamInput()),
       TrackingMode::PICAM_TRACK,
-      ControlSource::PICAM_DETECTION,
-      false,
+      ControlSource::PICAM_MEASUREMENT,
       false);
 }
 
@@ -169,8 +157,8 @@ int main() {
   testIdleToWebcamSearch();
   testWebcamSearchToIdleWhenTargetStales();
   testPicamAcquireHasGlobalPriority();
-  testPicamTrackToPredict();
-  testPicamPredictToHold();
+  testPicamTrackReusesRecentMeasurement();
+  testPicamTrackToHoldAfterReuseWindow();
   testPicamHoldToWebcamSearchAfterLockExpires();
   testPicamHoldToIdleAfterHoldTimeout();
   testPicamReacquiredDuringHold();

@@ -159,20 +159,19 @@ class TestVisualizer(Node):
     self.last_test_velocity = velocity
 
   def debugCallback(self, msg):
-    if msg.has_raw and not self.use_test_vision:
+    if msg.detected and not self.use_test_vision:
       self.appendRawSample(
         msg.sample_time,
         np.array(msg.raw_p, dtype=float),
-        np.array(msg.raw_v, dtype=float))
+        np.zeros(2, dtype=float))
 
-    if msg.estimator_initialized:
+    if msg.tracking_mode in ('PICAM_TRACK', 'PICAM_HOLD'):
       self.kf_history.append((
         msg.sample_time,
-        np.array(msg.estimated_p, dtype=float),
-        msg.predicted_only))
+        np.array(msg.filtered_p, dtype=float),
+        False))
 
-    if msg.has_control:
-      self.latest_control = msg
+    self.latest_control = msg
 
   def imageCallback(self, msg):
     self.latest_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
@@ -480,17 +479,15 @@ class TestVisualizer(Node):
 
     if self.latest_control is not None:
       text = (
-        f'u=({self.latest_control.u_yaw:.3f}, {self.latest_control.u_pitch:.3f}) '
-        f'fire={self.latest_control.fire} reload={self.latest_control.reload}')
+        f'u=({self.latest_control.u_yaw:.3f}, {self.latest_control.u_pitch:.3f})')
       control_y = 255 if self.use_fixed_view else 230
       cv2.putText(image, text, (20, control_y), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (70, 70, 70), 1)
       mode = getattr(self.latest_control, 'tracking_mode', '')
       source = getattr(self.latest_control, 'control_source', '')
-      is_pixel = getattr(self.latest_control, 'is_pixel', False)
       if mode or source:
         cv2.putText(
           image,
-          f'{mode} / {source} pixel={is_pixel}',
+          f'{mode} / {source}',
           (20, control_y + 24),
           cv2.FONT_HERSHEY_SIMPLEX,
           0.55,

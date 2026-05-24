@@ -94,8 +94,8 @@ class TrackTest(Node):
     self.latest_debug = msg
     self.latest_debug_time = self.nowSeconds()
     self.debug_times.append(self.latest_debug_time)
-    if msg.estimator_initialized:
-      self.estimate_history.append(np.array(msg.estimated_p, dtype=float))
+    if msg.tracking_mode == 'PICAM_TRACK':
+      self.estimate_history.append(np.array(msg.filtered_p, dtype=float))
 
   def makeCanvas(self):
     if self.latest_image is not None:
@@ -201,17 +201,15 @@ class TrackTest(Node):
 
   def drawEstimate(self, image):
     msg = self.latest_debug
-    if msg is None or not msg.estimator_initialized:
+    if msg is None or msg.tracking_mode not in ('PICAM_TRACK', 'PICAM_HOLD'):
       return
 
-    point = np.array(msg.estimated_p, dtype=float)
-    velocity = np.array(msg.estimated_v, dtype=float)
-    color = (0, 0, 255) if msg.predicted_only else (255, 0, 0)
-    label = 'pred' if msg.predicted_only else 'est'
+    point = np.array(msg.filtered_p, dtype=float)
+    color = (255, 0, 0)
+    label = 'filtered'
 
     self.drawTrail(image, self.estimate_history, (255, 120, 120), 2)
     self.drawPoint(image, point, color, label, (8, 18))
-    self.drawVelocityArrow(image, point, velocity, (255, 0, 0), 'est v')
 
   def drawStatus(self, image):
     rows = [
@@ -247,11 +245,10 @@ class TrackTest(Node):
       debug = self.latest_debug
       mode = getattr(debug, 'tracking_mode', '')
       source = getattr(debug, 'control_source', '')
-      predicted = bool(getattr(debug, 'predicted_only', False))
-      initialized = bool(getattr(debug, 'estimator_initialized', False))
+      source_age = float(getattr(debug, 'source_age', -1.0))
       status_text = (
-        f'estimator={initialized} predicted={predicted} '
-        f'dt={float(getattr(debug, "dt", 0.0)):.3f}s')
+        f'detected={bool(getattr(debug, "detected", False))} '
+        f'source_age={source_age:.3f}s')
       cv2.putText(
         image,
         status_text,
@@ -275,24 +272,23 @@ class TrackTest(Node):
           cv2.LINE_AA)
         y += 24
 
-      if debug.has_control:
-        u_yaw_deg = float(debug.u_yaw) * 180.0 / np.pi
-        u_pitch_deg = float(debug.u_pitch) * 180.0 / np.pi
-        cv2.putText(
-          image,
-          f'u=({u_yaw_deg:.3f}, {u_pitch_deg:.3f}) deg',
-          (16, y),
-          cv2.FONT_HERSHEY_SIMPLEX,
-          0.55,
-          (0, 0, 0),
-          1,
-          cv2.LINE_AA)
-        y += 24
+      u_yaw_deg = float(debug.u_yaw) * 180.0 / np.pi
+      u_pitch_deg = float(debug.u_pitch) * 180.0 / np.pi
+      cv2.putText(
+        image,
+        f'u=({u_yaw_deg:.3f}, {u_pitch_deg:.3f}) deg',
+        (16, y),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.55,
+        (0, 0, 0),
+        1,
+        cv2.LINE_AA)
+      y += 24
 
-      if debug.has_raw:
+      if debug.detected:
         raw = np.array(debug.raw_p, dtype=float)
-        estimated = np.array(debug.estimated_p, dtype=float)
-        residual = float(np.linalg.norm(estimated - raw))
+        filtered = np.array(debug.filtered_p, dtype=float)
+        residual = float(np.linalg.norm(filtered - raw))
         cv2.putText(
           image,
           f'residual={residual:.2f}px',
@@ -309,7 +305,7 @@ class TrackTest(Node):
                 cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1, cv2.LINE_AA)
     cv2.putText(image, 'YOLO bbox/center', (170, h - 18),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 220, 0), 1, cv2.LINE_AA)
-    cv2.putText(image, 'estimator position/velocity', (360, h - 18),
+    cv2.putText(image, 'filtered position', (360, h - 18),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.55, (220, 0, 0), 1, cv2.LINE_AA)
 
   def draw(self):
