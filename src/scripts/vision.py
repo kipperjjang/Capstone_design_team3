@@ -16,97 +16,134 @@ from std_msgs.msg import Bool
 
 # from trajectory_utils import load_runtime_config
 
-def jetson_gstreamer_pipeline(
+def csicam_gstreamer_pipeline(
     sensor_id=0,
-    capture_width=1280,
-    capture_height=720,
-    display_width=640,
-    display_height=480,
+    width=1280,
+    height=720,
     framerate=30,
     flip_method=0,
 ):
     return (
         f"nvarguscamerasrc sensor-id={sensor_id} ! "
         f"video/x-raw(memory:NVMM), "
-        f"width=(int){capture_width}, "
-        f"height=(int){capture_height}, "
+        f"width=(int){width}, "
+        f"height=(int){height}, "
         f"framerate=(fraction){framerate}/1 ! "
         f"nvvidconv flip-method={flip_method} ! "
-        f"video/x-raw, "
-        f"width=(int){display_width}, "
-        f"height=(int){display_height}, "
-        f"format=(string)BGRx ! "
+        f"video/x-raw, format=(string)BGRx ! "
         f"videoconvert ! "
         f"video/x-raw, format=(string)BGR ! "
         f"appsink drop=true max-buffers=1 sync=false"
     )
 
-class WebCAMLatestFrameReader:
-    def __init__(self, src=0, width=1280, height=720, fps=30):
-        self.src = src
-        self.width = width
-        self.height = height
-        self.fps = fps
+def webcam_gstreamer_pipeline(
+    device="/dev/video0",
+    width=1280,
+    height=720,
+    framerate=30,
+):
+    # TODO: Check whether HW-accelerated MJPEG decode is available on the target Jetson.
+    # Commands for checking HW decoder
+    ## Option 1
+    # $ gst-inspect-1.0 nvv4l2decoder
+    # $ gst-inspect-1.0 nvv4l2decoder | grep -i mjpeg
+    # $ gst-inspect-1.0 nvv4l2decoder | less
+    ## Option 2
+    # $ GST_DEBUG=2 gst-launch-1.0 \
+    # v4l2src device=/dev/video1 io-mode=2 ! \
+    # image/jpeg,width=1280,height=720,framerate=30/1 ! \
+    # nvv4l2decoder mjpeg=1 ! \
+    # fakesink
 
-        self.cap = None
-        self.frame = None
-        self.lock = threading.Lock()
-        self.running = False
-        self.thread = None
+    # If supported by the installed JetPack/GStreamer plugins, replace the CPU jpegdec path below with:
+    #   v4l2src device={device} io-mode=2 !
+    #   image/jpeg,width=(int){width},height=(int){height},framerate=(fraction){framerate}/1 !
+    #   nvv4l2decoder mjpeg=1 !
+    #   nvvidconv !
+    #   video/x-raw, format=(string)BGRx !
+    #   videoconvert !
+    #   video/x-raw, format=(string)BGR !
+    #   appsink drop=true max-buffers=1 sync=false
+    # This can reduce CPU load and latency, but should be verified with gst-inspect-1.0 nvv4l2decoder
+    # and a standalone gst-launch-1.0 test before replacing the current stable jpegdec pipeline.
+    return (
+        f"v4l2src device={device} io-mode=2 ! "
+        f"image/jpeg, "
+        f"width=(int){width}, "
+        f"height=(int){height}, "
+        f"framerate=(fraction){framerate}/1 ! "
+        f"jpegdec ! "
+        f"videoconvert ! "
+        f"video/x-raw, format=(string)BGR ! "
+        f"appsink drop=true max-buffers=1 sync=false"
+    )
 
-    def start(self):
-        self.cap = cv2.VideoCapture(self.src, cv2.CAP_V4L2)
-
-        # MJPG configuration
-        self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
-        self.cap.set(cv2.CAP_PROP_FPS, self.fps)
-        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-
-        if not self.cap.isOpened():
-            raise RuntimeError(
-                f"Camera /dev/video{self.src} could not be opened. "
-                "Try src=1, src=2, or check v4l2-ctl --list-devices."
-            )
-
-        self.running = True
-        self.thread = threading.Thread(target=self._reader_loop, daemon=True)
-        self.thread.start()
-
-    def _reader_loop(self):
-        while self.running:
-            ret, frame = self.cap.read()
-            
-            if not ret:
-              raise RuntimeError("Camera opened, but first frame could not be read.")
-            
-            if ret:
-                with self.lock:
-                    self.ret = ret
-                    self.frame = frame
-
-    def read(self):
-        with self.lock:
-            if self.frame is None:
-                return False, None
-            return self.ret, self.frame.copy()    
-
-    def get_latest_frame(self):
-        with self.lock:
-            if self.latest_frame is None:
-                return None, None, None
-
-            return self.latest_frame.copy(), self.latest_timestamp, self.frame_count
-        
-    def stop(self):
-        self.running = False
-
-        if self.thread is not None:
-            self.thread.join(timeout=1.0)
-
-        if self.cap is not None:
-            self.cap.release()
+# class WebCAMLatestFrameReader:
+#     def __init__(self, src=0, width=1280, height=720, fps=30):
+#         self.src = src
+#         self.width = width
+#         self.height = height
+#         self.fps = fps
+#
+#         self.cap = None
+#         self.frame = None
+#         self.lock = threading.Lock()
+#         self.running = False
+#         self.thread = None
+#
+#     def start(self):
+#         self.cap = cv2.VideoCapture(self.src, cv2.CAP_V4L2)
+#
+#         # MJPG configuration
+#         self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+#         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
+#         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
+#         self.cap.set(cv2.CAP_PROP_FPS, self.fps)
+#         self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+#
+#         if not self.cap.isOpened():
+#             raise RuntimeError(
+#                 f"Camera /dev/video{self.src} could not be opened. "
+#                 "Try src=1, src=2, or check v4l2-ctl --list-devices."
+#             )
+#
+#         self.running = True
+#         self.thread = threading.Thread(target=self._reader_loop, daemon=True)
+#         self.thread.start()
+#
+#     def _reader_loop(self):
+#         while self.running:
+#             ret, frame = self.cap.read()
+#
+#             if not ret:
+#               raise RuntimeError("Camera opened, but first frame could not be read.")
+#
+#             if ret:
+#                 with self.lock:
+#                     self.ret = ret
+#                     self.frame = frame
+#
+#     def read(self):
+#         with self.lock:
+#             if self.frame is None:
+#                 return False, None
+#             return self.ret, self.frame.copy()
+#
+#     def get_latest_frame(self):
+#         with self.lock:
+#             if self.latest_frame is None:
+#                 return None, None, None
+#
+#             return self.latest_frame.copy(), self.latest_timestamp, self.frame_count
+#
+#     def stop(self):
+#         self.running = False
+#
+#         if self.thread is not None:
+#             self.thread.join(timeout=1.0)
+#
+#         if self.cap is not None:
+#             self.cap.release()
 
 class LatestFrameReader:
     def __init__(self, pipeline: Optional[any] = None):
@@ -114,12 +151,9 @@ class LatestFrameReader:
         self.cap = None
         self.running = False
         self.thread = None
-        self.frame = None
 
         self.lock = threading.Lock()
         self.latest_frame = None
-        self.latest_timestamp = 0.0
-        self.frame_count = 0
 
     def start(self):
         if self.pipeline is not None:
@@ -147,15 +181,10 @@ class LatestFrameReader:
 
             with self.lock:
                 self.latest_frame = frame
-                self.latest_timestamp = time.time()
-                self.frame_count += 1
 
     def get_latest_frame(self):
         with self.lock:
-            if self.latest_frame is None:
-                return None, None, None
-
-            return self.latest_frame.copy(), self.latest_timestamp, self.frame_count
+            return self.latest_frame
 
     def stop(self):
         self.running = False
@@ -202,9 +231,9 @@ class VisionNode(Node):
     # self.target_class = int(vision_config.get("target_class", 1))
     # self.confidence = float(vision_config.get("confidence", 0.2))
     self.box_size = np.zeros(2, dtype=np.float32)
-    
+
     self.bridge = CvBridge()
-    self.model = YOLO(self.yolo_model_path)
+    self.model = YOLO(self.yolo_model_path, task="detect")
     self.position = np.zeros(2, dtype=np.float32)
     self.velocity = np.zeros(2, dtype=np.float32)
     self.acceleration = np.zeros(2, dtype=np.float32)
@@ -223,18 +252,23 @@ class VisionNode(Node):
 
     if self.camera_type == 0:
       self.reader = LatestFrameReader(
-         jetson_gstreamer_pipeline(
+         csicam_gstreamer_pipeline(
           sensor_id=0,
-          capture_width=1280,
-          capture_height=720,
-          display_width=1280,
-          display_height=720,
+          width=1280,
+          height=720,
           framerate=60,
           flip_method=0,
        )
-      ) 
+      )
     elif self.camera_type == 1:
-      self.reader = WebCAMLatestFrameReader(src=1, width=1920, height=1080, fps=30)
+      self.reader = LatestFrameReader(
+        webcam_gstreamer_pipeline(
+          device="/dev/video1",
+          width=1280,
+          height=720,
+          framerate=30,
+        )
+      )
 
     self.reader.start()
 
@@ -254,10 +288,7 @@ class VisionNode(Node):
       self.reset_motion_estimate()
 
   def read_img(self):
-    if self.camera_type == 0:
-      frame, frame_ts, frame_count = self.reader.get_latest_frame()
-    elif self.camera_type == 1:
-      ret, frame = self.reader.read()
+    frame = self.reader.get_latest_frame()
 
     if frame is None:
       time.sleep(0.001)
@@ -283,7 +314,6 @@ class VisionNode(Node):
     self.box_size = np.zeros(2, dtype=np.float32)
     if self.img is None:
       return
-
 
     results = self.model(
         self.img,
