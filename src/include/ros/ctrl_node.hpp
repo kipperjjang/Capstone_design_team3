@@ -33,6 +33,7 @@ private:
   void timerCallback();
 
   // Utils
+  void decideFire(const RobotState &state, ControlState &control);
   ControlFSMInput buildFSMInput(double now) const;
   ControlTick executeMode(const ControlFSMOutput &fsm_output, double now);
   ControlTick trackPicam(double now);
@@ -72,6 +73,9 @@ private:
   bool first_joint_{false};
   Eigen::Vector2d joint_{Eigen::Vector2d::Zero()};
   Eigen::Vector2d joint_vel_{Eigen::Vector2d::Zero()};
+  Eigen::Vector2d joint_buffer_{Eigen::Vector2d::Zero()};
+  Eigen::Vector2d joint_mean_{Eigen::Vector2d::Zero()};
+
   Eigen::Vector2d hold_joint_target_{Eigen::Vector2d::Zero()};
   bool has_hold_joint_target_{false};
   TrackingMode hold_joint_mode_{TrackingMode::IDLE};

@@ -14,6 +14,7 @@ struct RobotState {
   // Image pixel data (observed data)
   Eigen::Vector2d p{Eigen::Vector2d::Zero()};           // Position on image
   
+  Eigen::Vector2d bbox{Eigen::Vector2d::Zero()};        // Size of bbox
   Eigen::Vector2d img_center{Eigen::Vector2d::Zero()};  // Image center
   std::string camera{"webcam"};
 
@@ -33,6 +34,9 @@ struct RobotState {
       p = Eigen::Vector2d(msg->p[0], msg->p[1]);
     }
 
+    if (msg->bbox.size() >= 2) {
+      bbox = Eigen::Vector2d(msg->bbox[0], msg->bbox[1]);
+    }
     if (msg->img_center.size() >= 2) {
       img_center = Eigen::Vector2d(msg->img_center[0], msg->img_center[1]);
     }

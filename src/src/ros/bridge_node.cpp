@@ -70,6 +70,9 @@ std::vector<uint8_t> makeControlFrame(
   if (!msg.ispixel) {
     flags |= 0x01;
   }
+  if (msg.fire) {
+    flags |= 0x02;
+  }
   frame.push_back(flags);
 
   const uint16_t crc = crc16Ccitt(frame.data() + kSof.size(), frame.size() - kSof.size());

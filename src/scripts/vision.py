@@ -153,6 +153,7 @@ class VisionNode(Node):
     self.declare_parameter("debug_image_fps", 10.0)
     self.declare_parameter("debug_jpeg_quality", 50) # range of the value : 0 ~ 100
     self.declare_parameter("debug_draw_text", False)
+    self.declare_parameter("debug_draw_bbox", False)
 
     self.declare_parameter("enable_mjpeg_stream", True)
     self.declare_parameter("mjpeg_host", "0.0.0.0")
@@ -175,6 +176,7 @@ class VisionNode(Node):
     self.debug_image_fps = float(self.get_parameter("debug_image_fps").value)
     self.debug_jpeg_quality = int(self.get_parameter("debug_jpeg_quality").value)
     self.debug_draw_text = bool(self.get_parameter("debug_draw_text").value)
+    self.debug_draw_bbox = bool(self.get_parameter("debug_draw_bbox").value)
     self.debug_image_period = 1.0 / max(self.debug_image_fps, 1e-6)
     self.last_debug_image_time = 0.0
 
@@ -431,7 +433,7 @@ class VisionNode(Node):
       scale_x = 1.0
       scale_y = 1.0
 
-    if self.is_detected and len(self.position) >= 2 and len(self.box_size) >= 2:
+    if self.debug_draw_bbox and self.is_detected and len(self.position) >= 2 and len(self.box_size) >= 2:
       cx = int(self.position[0] * scale_x)
       cy = int(self.position[1] * scale_y)
       bw = int(self.box_size[0] * scale_x)

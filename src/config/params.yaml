@@ -6,7 +6,9 @@ vision:
 # Controller parameters 
 controller:
   image_offset:           [0.0, 0.0]
-  angle_offset:           [0.0, 0.0]
+  pixel_offset:           [0.0, 0.0]
+  edge_joint_threshold:   [5e-2, 1e-2]
+  vel_norm_threshold:     1e-2
   Kp:                     [0.0002 , -0.0006] 
   Kd:                     [0.000, 0.00]
   

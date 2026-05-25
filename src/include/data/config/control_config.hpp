@@ -19,7 +19,10 @@ struct CameraCalibration {
 
 struct ControlConfig {
   Eigen::Vector2d img_offset{Eigen::Vector2d::Zero()}; 
-  Eigen::Vector2d ang_offset{Eigen::Vector2d::Zero()}; 
+  Eigen::Vector2d pixel_offset{Eigen::Vector2d::Zero()}; 
+  Eigen::Vector2d edge_joint_threshold{Eigen::Vector2d::Zero()}; 
+  double vel_norm_threshold{1e-2};
+
   Eigen::Matrix2d Kp{Eigen::Matrix2d::Zero()};
   Eigen::Matrix2d Kd{Eigen::Matrix2d::Zero()};     // PD coefficient
 
@@ -37,10 +40,6 @@ struct ControlConfig {
   bool picam_lpf_enabled{true};
   double picam_lpf_alpha{0.5};
   double picam_lpf_reset_gap_sec{0.25};
-
-  double err_p_track{0.0};    // Error threshold for tracking, position
-  double err_v_track{0.0};    // Error threshold for tracking, velocity
-  double err_p_fire{0.0};     // Error threshold for aim, position
 
   const CameraCalibration& calibration(const std::string &camera_name) const;
   static ControlConfig load(const std::string &path);

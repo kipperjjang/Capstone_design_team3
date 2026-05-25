@@ -6,3 +6,6 @@ float32 u_pitch
 
 # Is Pixel
 bool ispixel
+
+# fire
+bool fire

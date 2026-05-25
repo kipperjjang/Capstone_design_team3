@@ -75,8 +75,13 @@ ControlConfig ControlConfig::load(const std::string &path) {
   const auto img_offset = controller["image_offset"].as<std::vector<double>>(std::vector<double>{0.0, 0.0});
   config.img_offset = Eigen::Vector2d(img_offset[0], img_offset[1]);
 
-  const auto ang_offset = controller["angle_offset"].as<std::vector<double>>(std::vector<double>{0.0, 0.0});
-  config.ang_offset = Eigen::Vector2d(ang_offset[0], ang_offset[1]);
+  const auto pixel_offset = controller["pixel_offset"].as<std::vector<double>>(std::vector<double>{0.0, 0.0});
+  config.pixel_offset = Eigen::Vector2d(pixel_offset[0], pixel_offset[1]);
+
+  const auto edge_joint_threshold = controller["edge_joint_threshold"].as<std::vector<double>>(std::vector<double>{0.0, 0.0});
+  config.edge_joint_threshold = Eigen::Vector2d(edge_joint_threshold[0], edge_joint_threshold[1]);
+
+  config.vel_norm_threshold = controller["vel_norm_threshold"].as<double>();
 
   const auto kp_diag = controller["Kp"].as<std::vector<double>>(std::vector<double>{0.0, 0.0});
   config.Kp = Eigen::Vector2d(kp_diag[0], kp_diag[1]).asDiagonal();
@@ -94,9 +99,5 @@ ControlConfig ControlConfig::load(const std::string &path) {
   config.picam_lpf_enabled = controller["picam_lpf_enabled"].as<bool>(config.picam_lpf_enabled);
   config.picam_lpf_alpha = std::max(0.0, std::min(1.0, controller["picam_lpf_alpha"].as<double>(config.picam_lpf_alpha)));
   config.picam_lpf_reset_gap_sec = controller["picam_lpf_reset_gap_sec"].as<double>(config.picam_lpf_reset_gap_sec);
-  config.err_p_track = controller["err_p_track"].as<double>(config.err_p_track);
-  config.err_v_track = controller["err_v_track"].as<double>(config.err_v_track);
-  config.err_p_fire = controller["err_p_fire"].as<double>(config.err_p_fire);
-
   return config;
 }
