@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from cv_bridge import CvBridge
 import cv2
+import errno
 import numpy as np
 import rclpy
 import threading
@@ -14,6 +15,8 @@ from ultralytics import YOLO
 from custom_msgs.msg import VisionMsg
 from sensor_msgs.msg import CompressedImage
 from std_msgs.msg import Bool
+
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 # from trajectory_utils import load_runtime_config
 
@@ -61,6 +64,7 @@ def webcam_gstreamer_pipeline(
     #   image/jpeg,width=(int){width},height=(int){height},framerate=(fraction){framerate}/1 !
     #   nvv4l2decoder mjpeg=1 !
     #   nvvidconv !
+    #######   jpegdec !
     #   video/x-raw, format=(string)BGRx !
     #   videoconvert !
     #   video/x-raw, format=(string)BGR !
@@ -73,78 +77,12 @@ def webcam_gstreamer_pipeline(
         f"width=(int){width}, "
         f"height=(int){height}, "
         f"framerate=(fraction){framerate}/1 ! "
-        f"jpegdec ! "
+        f"nvv4l2decoder mjpeg=1 !"
+        f"nvvidconv !"
         f"videoconvert ! "
         f"video/x-raw, format=(string)BGR ! "
         f"appsink drop=true max-buffers=1 sync=false"
     )
-
-# class WebCAMLatestFrameReader:
-#     def __init__(self, src=0, width=1280, height=720, fps=30):
-#         self.src = src
-#         self.width = width
-#         self.height = height
-#         self.fps = fps
-#
-#         self.cap = None
-#         self.frame = None
-#         self.lock = threading.Lock()
-#         self.running = False
-#         self.thread = None
-#
-#     def start(self):
-#         self.cap = cv2.VideoCapture(self.src, cv2.CAP_V4L2)
-#
-#         # MJPG configuration
-#         self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
-#         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
-#         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
-#         self.cap.set(cv2.CAP_PROP_FPS, self.fps)
-#         self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-#
-#         if not self.cap.isOpened():
-#             raise RuntimeError(
-#                 f"Camera /dev/video{self.src} could not be opened. "
-#                 "Try src=1, src=2, or check v4l2-ctl --list-devices."
-#             )
-#
-#         self.running = True
-#         self.thread = threading.Thread(target=self._reader_loop, daemon=True)
-#         self.thread.start()
-#
-#     def _reader_loop(self):
-#         while self.running:
-#             ret, frame = self.cap.read()
-#
-#             if not ret:
-#               raise RuntimeError("Camera opened, but first frame could not be read.")
-#
-#             if ret:
-#                 with self.lock:
-#                     self.ret = ret
-#                     self.frame = frame
-#
-#     def read(self):
-#         with self.lock:
-#             if self.frame is None:
-#                 return False, None
-#             return self.ret, self.frame.copy()
-#
-#     def get_latest_frame(self):
-#         with self.lock:
-#             if self.latest_frame is None:
-#                 return None, None, None
-#
-#             return self.latest_frame.copy(), self.latest_timestamp, self.frame_count
-#
-#     def stop(self):
-#         self.running = False
-#
-#         if self.thread is not None:
-#             self.thread.join(timeout=1.0)
-#
-#         if self.cap is not None:
-#             self.cap.release()
 
 class LatestFrameReader:
   def __init__(self, pipeline=None):
@@ -205,7 +143,7 @@ class VisionNode(Node):
 
     self.declare_parameter("publish_image", False)
     self.declare_parameter("vision_topic", "/vision")
-    self.declare_parameter("image_topic", "/vision/image/compressed")
+    self.declare_parameter("image_topic", "/vision/image")
     self.declare_parameter("enabled_topic", "/vision_webcam/enabled")
 
     self.declare_parameter("profile_timing", False)
@@ -215,6 +153,10 @@ class VisionNode(Node):
     self.declare_parameter("debug_image_fps", 10.0)
     self.declare_parameter("debug_jpeg_quality", 50) # range of the value : 0 ~ 100
     self.declare_parameter("debug_draw_text", False)
+
+    self.declare_parameter("enable_mjpeg_stream", True)
+    self.declare_parameter("mjpeg_host", "0.0.0.0")
+    self.declare_parameter("mjpeg_port", 8080)
     
     # Initialize ROS Parameters
     self.config_path      = self.get_parameter("config_path").value
@@ -235,6 +177,10 @@ class VisionNode(Node):
     self.debug_draw_text = bool(self.get_parameter("debug_draw_text").value)
     self.debug_image_period = 1.0 / max(self.debug_image_fps, 1e-6)
     self.last_debug_image_time = 0.0
+
+    self.enable_mjpeg_stream = bool(self.get_parameter("enable_mjpeg_stream").value)
+    self.mjpeg_host = self.get_parameter("mjpeg_host").value
+    self.mjpeg_port = int(self.get_parameter("mjpeg_port").value)
     
     # Read Confi File
     self.load_config(self.config_path)
@@ -277,7 +223,7 @@ class VisionNode(Node):
           width=1280,
           height=720,
           framerate=60,
-          flip_method=0,
+          flip_method=2,
        )
       )
     elif self.camera_type == 1:
@@ -298,6 +244,15 @@ class VisionNode(Node):
         reliability=ReliabilityPolicy.BEST_EFFORT,
     )
     self.image_pub = self.create_publisher(CompressedImage, self.image_topic, self.image_qos) if self.publish_image else None
+
+    self.stream_lock = threading.Lock()
+    self.latest_stream_jpeg = None
+    self.mjpeg_server = None
+    self.stream_seq = 0
+
+    if self.enable_mjpeg_stream:
+      self.startMjpegServer()
+
     self.enabled_sub = None
     if self.camera_type == 1:
       self.enabled_sub = self.create_subscription(Bool, self.enabled_topic, self.enabledCallback, 1)
@@ -382,9 +337,6 @@ class VisionNode(Node):
     # Select the best bbox
     box = self.choose_best_box(boxes)
 
-    # confidences = boxes.conf.cpu().numpy()
-    # self.confidence = np.max(confidences)
-    # best_index = int(np.argmax(confidences))
     x1, y1, x2, y2 = box
     self.box_size = np.abs(np.array([x2 - x1, y2 - y1]))
     self.position = np.array([(x1 + x2) / 2.0, (y1 + y2) / 2.0], dtype=np.float32)
@@ -454,7 +406,10 @@ class VisionNode(Node):
     already contains the latest model result. To reduce latency, the frame is first
     resized to the debug resolution and then the bbox is drawn on the smaller image.
     """
-    if self.image_pub is None or self.img is None:
+    if self.img is None:
+      return
+
+    if self.image_pub is None and not self.enable_mjpeg_stream:
       return
 
     now_sec = time.time()
@@ -512,11 +467,102 @@ class VisionNode(Node):
     if not success:
       return
 
-    image_msg = CompressedImage()
-    image_msg.header.stamp = self.get_clock().now().to_msg()
-    image_msg.format = "jpeg"
-    image_msg.data = encoded_img.tobytes()
-    self.image_pub.publish(image_msg)
+    # image_msg = CompressedImage()
+    # image_msg.header.stamp = self.get_clock().now().to_msg()
+    # image_msg.format = "jpeg"
+    # image_msg.data = encoded_img.tobytes()
+    # self.image_pub.publish(image_msg)
+
+    jpeg_bytes = encoded_img.tobytes()
+
+    if self.enable_mjpeg_stream:
+      with self.stream_lock:
+        self.latest_stream_jpeg = jpeg_bytes
+        self.stream_seq += 1
+
+    if self.image_pub is not None:
+      image_msg = CompressedImage()
+      image_msg.header.stamp = self.get_clock().now().to_msg()
+      image_msg.format = "jpeg"
+      image_msg.data = jpeg_bytes
+      self.image_pub.publish(image_msg)
+
+  def startMjpegServer(self):
+    node = self
+
+    class MjpegHandler(BaseHTTPRequestHandler):
+      def log_message(self, format, *args):
+        return
+
+      def do_GET(self):
+        if self.path == "/":
+          self.send_response(200)
+          self.send_header("Content-Type", "text/html")
+          self.end_headers()
+          self.wfile.write(
+            b"<html><body style='margin:0;background:black;'>"
+            b"<img src='/stream.mjpg' style='width:100%;height:auto;'>"
+            b"</body></html>"
+          )
+          return
+
+        if self.path != "/stream.mjpg":
+          self.send_response(404)
+          self.end_headers()
+          return
+
+        self.send_response(200)
+        self.send_header("Age", "0")
+        self.send_header("Cache-Control", "no-cache, private")
+        self.send_header("Pragma", "no-cache")
+        self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
+        self.end_headers()
+
+        last_seq = -1
+
+        while node.enable_mjpeg_stream and rclpy.ok():
+          with node.stream_lock:
+            jpeg = node.latest_stream_jpeg
+            seq = node.stream_seq
+
+          if jpeg is None or seq == last_seq:
+            time.sleep(0.002)
+            continue
+
+          last_seq = seq
+
+          try:
+            self.wfile.write(b"--frame\r\n")
+            self.wfile.write(b"Content-Type: image/jpeg\r\n")
+            self.wfile.write(f"Content-Length: {len(jpeg)}\r\n\r\n".encode())
+            self.wfile.write(jpeg)
+            self.wfile.write(b"\r\n")
+          except (BrokenPipeError, ConnectionResetError):
+            break
+
+    try:
+      self.mjpeg_server = ThreadingHTTPServer(
+        (self.mjpeg_host, self.mjpeg_port),
+        MjpegHandler,
+      )
+    except OSError as exc:
+      if exc.errno == errno.EADDRINUSE:
+        self.enable_mjpeg_stream = False
+        self.get_logger().error(
+          f"MJPEG stream disabled: {self.mjpeg_host}:{self.mjpeg_port} is already in use"
+        )
+        return
+      raise
+
+    thread = threading.Thread(
+      target=self.mjpeg_server.serve_forever,
+      daemon=True,
+    )
+    thread.start()
+
+    self.get_logger().info(
+      f"MJPEG stream enabled: http://{self.mjpeg_host}:{self.mjpeg_port}"
+    )
 
   def timingRow(self, label, value, total):
     ms = value * 1000.0
@@ -607,6 +653,10 @@ class VisionNode(Node):
       self.destroy_node()
       if rclpy.ok():
           rclpy.shutdown()
+
+      if self.mjpeg_server is not None:
+        self.mjpeg_server.shutdown()
+        self.mjpeg_server.server_close()
 
 
 def main():

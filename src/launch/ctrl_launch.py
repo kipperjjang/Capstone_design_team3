@@ -60,6 +60,7 @@ def generate_launch_description():
       {'image_topic':     '/vision_webcam/image'},
       {'enabled_topic':   '/vision_webcam/enabled'},
       {'publish_image':   ParameterValue(publish_image, value_type=bool)},
+      {'mjpeg_port':      8080},
     ],
   )
 
@@ -77,6 +78,7 @@ def generate_launch_description():
       {'vision_topic':    '/vision_picam'},
       {'image_topic':     '/vision_picam/image'},
       {'publish_image':   ParameterValue(publish_image, value_type=bool)},
+      {'mjpeg_port':      8081},
     ],
   )
 
@@ -110,7 +112,7 @@ def generate_launch_description():
   )
 
   return LaunchDescription([
-    DeclareLaunchArgument('enable_debug', default_value='true'),
+    DeclareLaunchArgument('enable_debug', default_value='false'),
     DeclareLaunchArgument('publish_image', default_value='true'),
     DeclareLaunchArgument('enable_webcam', default_value='true'),
     DeclareLaunchArgument('enable_picam', default_value='true'),
