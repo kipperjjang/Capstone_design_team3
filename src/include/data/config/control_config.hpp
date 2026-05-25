@@ -31,6 +31,12 @@ struct ControlConfig {
   double max_time_gap{0.15};  // Maximum time gap between vision message
 
   double ctrl_max_time_gap{1.0};  // Maximum time gap between ctrl
+  double picam_track_reuse_sec{0.25};
+  double picam_track_hold_sec{1.0};
+  double webcam_measurement_max_age{0.3};
+  bool picam_lpf_enabled{true};
+  double picam_lpf_alpha{0.5};
+  double picam_lpf_reset_gap_sec{0.25};
 
   double err_p_track{0.0};    // Error threshold for tracking, position
   double err_v_track{0.0};    // Error threshold for tracking, velocity

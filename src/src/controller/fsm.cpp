@@ -1,46 +1,115 @@
 #include "controller/fsm.hpp"
-#include <iostream>
 
-void FSM::update(const RobotState &state) {
-  const double dt = state.dt;
-  const bool has_target = state.detected || state.tracked;
-  const double err_p = (state.img_center - state.p).norm();
-  const double err_v = state.v.norm();
-  const std::string cam = state.camera;
-  const bool has_picam_target = cam == "picam" && has_target;
+// Check status when failed to track during Picam tracking
+TrackingMode ControlFSM::fallbackMode(const ControlFSMInput &input) const {
+  return input.has_fresh_webcam_target ? TrackingMode::WEBCAM_SEARCH : TrackingMode::IDLE;
+}
 
-  switch (fsm_state_) {
-    case FSMState::SEARCH:
-      // std::cout << "search" << std::endl;
-      if (has_picam_target) {
-        fsm_state_ = FSMState::TRACK;
+ControlFSMOutput ControlFSM::update(const ControlFSMInput &input) {
+  // Prioritize picam tracking
+  if (input.has_fresh_picam_target) {
+    mode_ = TrackingMode::PICAM_TRACK;
+    output_ = outputForMode(mode_);
+    return output_;
+  }
+
+  switch (mode_) {
+    case TrackingMode::IDLE:
+      mode_ = input.has_fresh_webcam_target ? TrackingMode::WEBCAM_SEARCH : TrackingMode::IDLE;
+      break;
+
+    case TrackingMode::WEBCAM_SEARCH:
+      mode_ = input.has_fresh_webcam_target ? TrackingMode::WEBCAM_SEARCH : TrackingMode::IDLE;
+      break;
+
+    case TrackingMode::PICAM_TRACK:
+      if (!input.has_picam_lock) {
+        mode_ = fallbackMode(input);          // Expired lock time (lock time; tracking holding time)
+      } else if (input.picam_age <= config_.picam_track_reuse_sec) {
+        mode_ = TrackingMode::PICAM_TRACK;    // Reuse last filtered YOLO briefly
+      } else if (input.picam_age <= config_.picam_track_hold_sec) {
+        mode_ = TrackingMode::PICAM_HOLD;     // Holding for YOLO detection
+      } else {
+        mode_ = fallbackMode(input);
       }
       break;
 
-    case FSMState::TRACK:
-      // std::cout << dt << std::endl;
-      if (!has_picam_target && dt > config_.ctrl_max_time_gap) {
-        fsm_state_ = FSMState::SEARCH;
+    case TrackingMode::PICAM_HOLD:
+      if (input.has_picam_lock && input.picam_age <= config_.picam_track_hold_sec) {
+        mode_ = TrackingMode::PICAM_HOLD;
+      } else {
+        mode_ = fallbackMode(input);
       }
-      break;
-
-    case FSMState::AIM:
-      if (!has_picam_target && dt > config_.max_time_gap) {
-        fsm_state_ = FSMState::SEARCH;
-      } else if (err_p < config_.err_p_fire && err_v < config_.err_v_track) {
-        fsm_state_ = FSMState::RELOAD;
-      } else if (err_p >= config_.err_p_track) {
-        fsm_state_ = FSMState::TRACK;
-      }
-      break;
-
-    case FSMState::RELOAD:
-      fsm_state_ = has_picam_target ? FSMState::TRACK : FSMState::SEARCH;
       break;
 
     default:
-      std::cout << "search" << std::endl;
-      fsm_state_ = FSMState::SEARCH;
+      mode_ = fallbackMode(input);
       break;
+  }
+
+  output_ = outputForMode(mode_);
+  return output_;
+}
+
+ControlFSMOutput ControlFSM::outputForMode(TrackingMode mode) const {
+  switch (mode) {
+    case TrackingMode::WEBCAM_SEARCH:
+      return {
+        TrackingMode::WEBCAM_SEARCH,
+        ControlSource::WEBCAM_DETECTION,
+        true,     // webcam enabled
+      };
+
+    case TrackingMode::PICAM_TRACK:
+      return {
+        TrackingMode::PICAM_TRACK,
+        ControlSource::PICAM_MEASUREMENT,
+        false,    // webcam disabled
+      };
+
+    case TrackingMode::PICAM_HOLD:
+      return {
+        TrackingMode::PICAM_HOLD,
+        ControlSource::JOINT_HOLD,
+        false,    // webcam disabled
+      };
+
+    case TrackingMode::IDLE:
+    default:
+      return {
+        TrackingMode::IDLE,
+        ControlSource::JOINT_HOLD,
+        true,     // webcam enabled
+      };
+  }
+}
+
+const char* ControlFSM::trackingModeName(TrackingMode mode) {
+  switch (mode) {
+    case TrackingMode::IDLE:
+      return "IDLE";
+    case TrackingMode::WEBCAM_SEARCH:
+      return "WEBCAM_SEARCH";
+    case TrackingMode::PICAM_TRACK:
+      return "PICAM_TRACK";
+    case TrackingMode::PICAM_HOLD:
+      return "PICAM_HOLD";
+    default:
+      return "UNKNOWN";
+  }
+}
+
+const char* ControlFSM::controlSourceName(ControlSource source) {
+  switch (source) {
+    case ControlSource::NONE:
+      return "NONE";
+    case ControlSource::WEBCAM_DETECTION:
+      return "WEBCAM_DETECTION";
+    case ControlSource::PICAM_MEASUREMENT:
+      return "PICAM_MEASUREMENT";
+    case ControlSource::JOINT_HOLD:
+      return "JOINT_HOLD";
+    default:
+      return "UNKNOWN";
   }
 }

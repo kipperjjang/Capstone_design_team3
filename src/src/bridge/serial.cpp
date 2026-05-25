@@ -10,13 +10,11 @@
 #include <cstring>
 #include <iostream>
 
-Serial::Serial(const PortConfig &config, bool rw) : config_(config) {
+Serial::Serial(const PortConfig &config) : config_(config) {
   // Initialize serial port
-  if (!openSerialPort(rw)) return;
+  if (!openSerialPort()) return;
 
-  auto port = rw ? config_.read_port : config_.write_port;
-  std::cout << "Serial port opened and configured: " << config_.name << " ("
-            << port << ")" << std::endl;
+  std::cout << "Serial port opened and configured: " << config_.name << std::endl;
 }
 
 ssize_t Serial::readSerial(uint8_t *buffer, std::size_t size) {
@@ -137,8 +135,8 @@ static bool configureParity(termios2 *uart_config, int parity) {
   }
 }
 
-bool Serial::openSerialPort(bool rw) {
-  auto port = rw ? config_.read_port : config_.write_port;
+bool Serial::openSerialPort() {
+  auto port = config_.port;
   serial_port_fd_ = open(port.c_str(), O_RDWR | O_NOCTTY | O_NONBLOCK);
   if (serial_port_fd_ < 0) {
     std::cerr << "Failed to open serial port " << config_.name << " at "

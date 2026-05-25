@@ -8,8 +8,7 @@ PortConfig PortConfig::load(const std::string &path) {
   const YAML::Node serial = file["bridge"]["serial"];
   PortConfig config(
     serial["name"].as<std::string>(),
-    serial["read_port"].as<std::string>(),
-    serial["write_port"].as<std::string>(),
+    serial["port"].as<std::string>(),
     serial["baud"].as<int>(),
     serial["data_bits"].as<int>(),
     serial["stop_bits"].as<int>(),

@@ -1,5 +1,6 @@
 #include "data/config/control_config.hpp"
 
+#include <algorithm>
 #include <stdexcept>
 #include <vector>
 
@@ -87,6 +88,12 @@ ControlConfig ControlConfig::load(const std::string &path) {
   config.time_delay = controller["time_delay"].as<double>(config.time_delay);
   config.max_time_gap = controller["max_time_gap"].as<double>(config.max_time_gap);
   config.ctrl_max_time_gap = controller["ctrl_max_time_gap"].as<double>(config.ctrl_max_time_gap);
+  config.picam_track_reuse_sec = controller["picam_track_reuse_sec"].as<double>(config.picam_track_reuse_sec);
+  config.picam_track_hold_sec = controller["picam_track_hold_sec"].as<double>(config.picam_track_hold_sec);
+  config.webcam_measurement_max_age = controller["webcam_measurement_max_age"].as<double>(config.webcam_measurement_max_age);
+  config.picam_lpf_enabled = controller["picam_lpf_enabled"].as<bool>(config.picam_lpf_enabled);
+  config.picam_lpf_alpha = std::max(0.0, std::min(1.0, controller["picam_lpf_alpha"].as<double>(config.picam_lpf_alpha)));
+  config.picam_lpf_reset_gap_sec = controller["picam_lpf_reset_gap_sec"].as<double>(config.picam_lpf_reset_gap_sec);
   config.err_p_track = controller["err_p_track"].as<double>(config.err_p_track);
   config.err_v_track = controller["err_v_track"].as<double>(config.err_v_track);
   config.err_p_fire = controller["err_p_fire"].as<double>(config.err_p_fire);

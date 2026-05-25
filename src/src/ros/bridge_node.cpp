@@ -7,6 +7,9 @@
 #include <chrono>
 #include <cstring>
 #include <functional>
+#include <iomanip>
+#include <iostream>
+#include <sstream>
 
 using std::placeholders::_1;
 
@@ -21,8 +24,8 @@ constexpr size_t  kMinFrameSize = kHeaderSize + kCrcSize;
 constexpr size_t  kPrevStatusOffset = 2;
 constexpr size_t  kLenOffset = 3;
 constexpr size_t  kSeqOffset = 4;
-constexpr uint8_t kStatusOk = 0x01;
-constexpr uint8_t kStatusFailed = 0x00;
+constexpr uint8_t kStatusOk = 0x00;
+constexpr uint8_t kStatusFailed = 0x01;
 
 uint16_t crc16Ccitt(const uint8_t *data, size_t size) {
   uint16_t crc = 0xFFFF;
@@ -64,19 +67,9 @@ std::vector<uint8_t> makeControlFrame(
   // appendBytes(frame, &msg.u_pitch_dot, sizeof(msg.u_pitch_dot));
 
   uint8_t flags = 0x00;
-  // Pixel, angle
   if (!msg.ispixel) {
     flags |= 0x01;
   }
-
-  if (msg.fire) {
-    flags |= 0x02;   // STM 기준 CMD_SHOOT = bit 1
-  }
-
-  if (msg.reload) {
-    flags |= 0x04;   // 임시로 STOP에 매핑하거나, 별도 정의 필요
-  }
-
   frame.push_back(flags);
 
   const uint16_t crc = crc16Ccitt(frame.data() + kSof.size(), frame.size() - kSof.size());
@@ -84,6 +77,39 @@ std::vector<uint8_t> makeControlFrame(
   frame.push_back(static_cast<uint8_t>(crc & 0xFF));
   frame.push_back(static_cast<uint8_t>((crc >> 8) & 0xFF));
 
+  // std::ostringstream frame_hex;
+  // frame_hex << std::hex << std::setfill('0');
+  // for (const uint8_t byte : frame) {
+  //   frame_hex << "0x" << std::setw(2) << static_cast<int>(byte) << ' ';
+  // }
+
+  // float decoded_yaw = 0.0F;
+  // float decoded_pitch = 0.0F;
+  // std::memcpy(&decoded_yaw, frame.data() + kHeaderSize, sizeof(decoded_yaw));
+  // std::memcpy(&decoded_pitch, frame.data() + kHeaderSize + sizeof(decoded_yaw), sizeof(decoded_pitch));
+
+  // uint16_t decoded_crc = 0;
+  // std::memcpy(&decoded_crc, frame.data() + frame.size() - kCrcSize, sizeof(decoded_crc));
+  // const uint16_t decoded_computed_crc = crc16Ccitt(frame.data() + kSof.size(), frame.size() - kSof.size() - kCrcSize);
+  // const uint8_t decoded_flags = frame[kHeaderSize + sizeof(decoded_yaw) + sizeof(decoded_pitch)];
+  // const bool decoded_ispixel = (decoded_flags & 0x01) == 0;
+
+  // std::cout << std::dec << std::setprecision(6)
+  //           << "[makeControlFrame]\n"
+  //           << "  decoded_sof: 0x" << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(frame[0])
+  //           << " 0x" << std::setw(2) << static_cast<int>(frame[1]) << std::dec << '\n'
+  //           << "  decoded_previous_read_status: " << (frame[kPrevStatusOffset] == kStatusOk ? "OK" : "FAILED") << '\n'
+  //           << "  decoded_payload_size: " << static_cast<int>(frame[kLenOffset]) << '\n'
+  //           << "  decoded_seq: " << static_cast<int>(frame[kSeqOffset]) << '\n'
+  //           << "  decoded_u_yaw: " << decoded_yaw << '\n'
+  //           << "  decoded_u_pitch: " << decoded_pitch << '\n'
+  //           << "  decoded_flags: 0x" << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(decoded_flags) << std::dec << '\n'
+  //           << "  decoded_ispixel: " << decoded_ispixel << '\n'
+  //           << "  decoded_crc: 0x" << std::hex << std::setw(4) << std::setfill('0') << decoded_crc << '\n'
+  //           << "  recomputed_crc: 0x" << std::setw(4) << decoded_computed_crc << std::dec << '\n'
+  //           << "  crc_ok: " << (decoded_crc == decoded_computed_crc) << '\n'
+  //           << "  frame_size: " << frame.size() << '\n'
+  //           << "  frame: " << frame_hex.str() << std::endl;
   return frame;
 }
 
@@ -95,17 +121,16 @@ BridgeNode::BridgeNode() : Node("bridge_node") {
   this->get_parameter("config_path", config_path);
 
   const PortConfig port_config = PortConfig::load(config_path);
-  // serial_ = std::make_unique<Serial>(port_config, true);
-  serial_ = std::make_unique<Serial>(port_config, false);
+  serial_ = std::make_unique<Serial>(port_config);
 
   const auto qos_latest = rclcpp::QoS(rclcpp::KeepLast(1));
-  control_sub_ = this->create_subscription<custom_msgs::msg::ControlMsg>("/control", qos_latest, std::bind(&BridgeNode::controlCallback, this, _1));
-  joint_pub_ = this->create_publisher<custom_msgs::msg::JointMsg>("/joint", qos_latest);
+  control_sub_  = this->create_subscription<custom_msgs::msg::ControlMsg>("/control", qos_latest, std::bind(&BridgeNode::controlCallback, this, _1));
+  joint_pub_    = this->create_publisher<custom_msgs::msg::JointMsg>("/joint", qos_latest);
 
-  const int read_period_ms = std::max(1, static_cast<int>(1000.0 / port_config.watchdog_frequency));
-  read_timer_ = this->create_wall_timer(std::chrono::milliseconds(read_period_ms), std::bind(&BridgeNode::readTimerCallback, this));
+  const int read_period_ms  = std::max(1, static_cast<int>(1000.0 / port_config.watchdog_frequency));
   const int write_period_ms = std::max(1, static_cast<int>(1000.0 / port_config.write_frequency));
-  write_timer_ = this->create_wall_timer(std::chrono::milliseconds(write_period_ms), std::bind(&BridgeNode::writeTimerCallback, this));
+  read_timer_   = this->create_wall_timer(std::chrono::milliseconds(read_period_ms), std::bind(&BridgeNode::readTimerCallback, this));
+  write_timer_  = this->create_wall_timer(std::chrono::milliseconds(write_period_ms), std::bind(&BridgeNode::writeTimerCallback, this));
   buffer_.reserve(1024);
 }
 
@@ -150,9 +175,7 @@ bool BridgeNode::writeFrameToSerial(const std::vector<uint8_t> &frame) {
 
 bool BridgeNode::readSerialFrame() {
   std::array<uint8_t, 256> read_buffer{};
-  if (!serial_ || !serial_->isOpen()) {
-    return false;
-  }
+  if (!serial_ || !serial_->isOpen()) return false;
 
   // Read Serial Frame
   const ssize_t bytes_read = serial_->readSerial(read_buffer.data(), read_buffer.size());
@@ -205,9 +228,6 @@ bool BridgeNode::parseReadFrames(std::vector<uint8_t> &buffer) {
     uint16_t received_crc = 0;
     std::memcpy(&received_crc, buffer.data() + frame_size - kCrcSize, sizeof(received_crc));
     const uint16_t computed_crc = crc16Ccitt(buffer.data() + kSof.size(), frame_size - kSof.size() - kCrcSize);
-    
-    // std::cout << "CRC received:\t" << received_crc << std::endl;
-    // std::cout << "CRC computed:\t" << computed_crc << std::endl;
     if (received_crc != computed_crc) {
       previous_read_status_ = false;
       RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000, "Dropping serial frame with invalid CRC16.");
@@ -217,12 +237,10 @@ bool BridgeNode::parseReadFrames(std::vector<uint8_t> &buffer) {
 
     // Previous read status check
     previous_read_status_ = true;
-    const bool remote_received_previous_write = buffer[kPrevStatusOffset] != kStatusFailed;
+    const bool remote_received_previous_write = buffer[kPrevStatusOffset] == kStatusOk;
     if (!remote_received_previous_write && !last_write_frame_.empty()) {
       (void)writeFrameToSerial(last_write_frame_);
     }
-
-    // const uint8_t read_seq = buffer[kSeqOffset];
 
     // Read data
     std::array<float, 6> values{};

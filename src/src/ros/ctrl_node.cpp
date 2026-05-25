@@ -6,7 +6,9 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <functional>
+#include <limits>
 
 using std::placeholders::_1;
 
@@ -18,49 +20,38 @@ void fillVector2(std::array<double, 2> &output, const Eigen::Vector2d &input) {
 }  // namespace
 
 CtrlNode::CtrlNode() : Node("control_node") {
-  // Read Configuration
   std::string config_path;
-  std::string vision_topic;
-  std::string vision_webcam_topic;
-  std::string vision_picam_topic;
+  std::string vision_topic, vision_webcam_topic, vision_picam_topic;
   this->declare_parameter<std::string>("config_path", "");
   this->declare_parameter<std::string>("vision_topic", "/vision");
   this->declare_parameter<std::string>("vision_webcam_topic", "/vision_webcam");
   this->declare_parameter<std::string>("vision_picam_topic", "/vision_picam");
-  this->declare_parameter<double>("webcam_pause_hold_sec", 0.0);
   this->get_parameter("config_path", config_path);
   this->get_parameter("vision_topic", vision_topic);
   this->get_parameter("vision_webcam_topic", vision_webcam_topic);
   this->get_parameter("vision_picam_topic", vision_picam_topic);
 
-  const EstimatorConfig estimator_config = EstimatorConfig::load(config_path);
   const ControlConfig controller_config = ControlConfig::load(config_path);
 
-  // Initilaize
-  estimator_ = std::make_unique<Estimator>(estimator_config);
   controller_ = std::make_unique<Controller>(controller_config);
-  this->get_parameter("webcam_pause_hold_sec", webcam_pause_hold_sec_);
-  if (webcam_pause_hold_sec_ <= 0.0) {
-    webcam_pause_hold_sec_ = estimator_config.max_time_gap;
-  }
+  fsm_ = std::make_unique<ControlFSM>(controller_config);
 
-  // Subscriber and Publisher
   const auto qos_latest = rclcpp::QoS(rclcpp::KeepLast(1));
   vision_sub_ = this->create_subscription<custom_msgs::msg::VisionMsg>(vision_topic, qos_latest, std::bind(&CtrlNode::visionCallback, this, _1));
   vision_webcam_sub_ = this->create_subscription<custom_msgs::msg::VisionMsg>(vision_webcam_topic, qos_latest, std::bind(&CtrlNode::visionCallback, this, _1));
   vision_picam_sub_ = this->create_subscription<custom_msgs::msg::VisionMsg>(vision_picam_topic, qos_latest, std::bind(&CtrlNode::visionCallback, this, _1));
   joint_sub_ = this->create_subscription<custom_msgs::msg::JointMsg>("/joint", qos_latest, std::bind(&CtrlNode::jointCallback, this, _1));
+
   ctrl_pub_ = this->create_publisher<custom_msgs::msg::ControlMsg>("/control", qos_latest);
   debug_pub_ = this->create_publisher<custom_msgs::msg::TestDebug>("/test/debug", qos_latest);
-  webcam_enabled_pub_ = this->create_publisher<std_msgs::msg::Bool>(
-      "/vision_webcam/enabled", rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable());
+  webcam_enabled_pub_ = this->create_publisher<std_msgs::msg::Bool>("/vision_webcam/enabled", rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable());
 
-  const int period = static_cast<int>(1000.0 / controller_config.hz);
+  const int period = std::max(1, static_cast<int>(1000.0 / controller_config.hz));
   timer_ = this->create_wall_timer(std::chrono::milliseconds(period), std::bind(&CtrlNode::timerCallback, this));
 }
 
 void CtrlNode::jointCallback(const custom_msgs::msg::JointMsg::SharedPtr msg) {
-  // Cache joint data
+  if (msg == nullptr) return;
   if (!first_joint_) first_joint_ = true;
 
   joint_ = toEigen(msg->joint);
@@ -69,126 +60,273 @@ void CtrlNode::jointCallback(const custom_msgs::msg::JointMsg::SharedPtr msg) {
 
 void CtrlNode::visionCallback(const custom_msgs::msg::VisionMsg::SharedPtr msg) {
   if (msg == nullptr) return;
-  if ((msg->detected || msg->tracked) && msg->p.size() < 2) return;
+  if (msg->detected && msg->p.size() < 2) return;
 
   RobotState vision_state(msg);
-  
+  if (!vision_state.detected) return;
+
   const double receive_time = this->now().seconds();
   vision_state.t = receive_time;
 
   if (vision_state.camera == "picam") {
     latest_picam_state_ = vision_state;
-    latest_picam_receive_time_ = receive_time;
     has_latest_picam_state_ = true;
   } else {
     latest_webcam_state_ = vision_state;
-    latest_webcam_receive_time_ = receive_time;
     has_latest_webcam_state_ = true;
   }
 }
 
-bool CtrlNode::hasTarget(const RobotState &state) const {
-  return state.detected || state.tracked;
-}
-
-bool CtrlNode::processPicamMeasurement(const RobotState &vision_state) {
-  if (!hasTarget(vision_state)) return false;
-
-  last_raw_state_ = vision_state;
-  has_raw_state_ = true;
-
-  if (!estimator_->isInitialized()) {
-    estimator_->init(vision_state);
-  } else {
-    estimator_->update(vision_state);
-  }
-
-  state_ = estimator_->isInitialized() ? estimator_->getState(false) : vision_state;
-  state_.joint = joint_;
-  state_.joint_vel = joint_vel_;
-  last_picam_time_ = vision_state.t;
-
-  // std::cout << "hi in cam" << std::endl;
-  controller_->run(state_);
-  publishControl(controller_->getControl());
-  publishDebug(state_, controller_->getControl(), true, false);
-  return true;
-}
-
-bool CtrlNode::processWebcamMeasurement(const RobotState &vision_state) {
-  if (!hasTarget(vision_state)) return false;
-
-  state_ = vision_state;
-  state_.joint = joint_;
-  state_.joint_vel = joint_vel_;
-  if (last_picam_time_ > 0.0) {
-    state_.dt = vision_state.t - last_picam_time_;
-  }
-
-  last_raw_state_ = state_;
-  has_raw_state_ = true;
-
-  controller_->run(state_);
-  publishControl(controller_->getControl());
-  publishDebug(state_, controller_->getControl(), true, false);
-  return true;
-}
-
 void CtrlNode::timerCallback() {
-  const double t_now = this->now().seconds();
-  const bool has_recent_picam_target = last_picam_time_ > 0.0 && t_now - last_picam_time_ <= controller_->config_.ctrl_max_time_gap;
-  publishWebcamEnabled(!has_recent_picam_target);
-  latest_picam_state_.dt = t_now - last_picam_time_;
-  latest_webcam_state_.dt = t_now - last_picam_time_;
+  const double now = this->now().seconds();
+  expirePicamLock(now);
 
-  bool ran_controller = false;
-  if (has_latest_picam_state_ && latest_picam_receive_time_ > last_processed_picam_receive_time_) {
-    last_processed_picam_receive_time_ = latest_picam_receive_time_;
-    ran_controller = processPicamMeasurement(latest_picam_state_);
+  const ControlFSMInput fsm_input = buildFSMInput(now);
+  const ControlFSMOutput fsm_output = fsm_->update(fsm_input);
+  updateHoldJointTarget(fsm_output.mode);
+  const ControlTick tick = executeMode(fsm_output, now);
+
+  publishWebcamEnabled(fsm_output.webcam_enabled);
+  if (shouldPublishControl(fsm_output)) {
+    publishControl(tick.control);
   }
 
-  if (!ran_controller && estimator_->isInitialized()) {
-    estimator_->update(t_now);
-    std::cout << estimator_->getDt() << std::endl;
-    if (estimator_->isInitialized()) {
-      state_ = estimator_->getState(false);
-      state_.joint = joint_;
-      state_.joint_vel = joint_vel_;
-      // std::cout << "hi" << std::endl;
-      controller_->run(state_);
-      publishControl(controller_->getControl());
-      publishDebug(state_, controller_->getControl(), false, true);
-      ran_controller = true;
-    }
-  }
-
-  if (!ran_controller && !has_recent_picam_target && has_latest_webcam_state_ &&
-      latest_webcam_receive_time_ > last_processed_webcam_receive_time_ &&
-      t_now - latest_webcam_receive_time_ <= estimator_->config_.max_time_gap) {
-    last_processed_webcam_receive_time_ = latest_webcam_receive_time_;
-    ran_controller = processWebcamMeasurement(latest_webcam_state_);
-  }
-
-  if (!ran_controller) {
-    publishControl(controller_->getControl());
-  }
-
-  // std::cout << "timer callback!!" << std::endl;
-  
-  // controller_->run(state_);
-  // publishControl(controller_->getControl());
-  // publishDebug(state_, controller_->getControl(), false, true);
+  publishDebug(fsm_input, fsm_output, tick);
 }
 
-void CtrlNode::publishControl(const ControlState &x) {
+bool CtrlNode::hasNewPicamTarget() const {
+  return has_latest_picam_state_ && latest_picam_state_.detected && latest_picam_state_.t > last_consumed_picam_time_;
+}
+
+bool CtrlNode::hasFreshPicamTarget(double now) const {
+  if (hasNewPicamTarget()) {
+    return true;
+  }
+
+  return has_picam_lock_ && has_filtered_picam_state_ && picamAge(now) <= controller_->config().picam_track_reuse_sec;
+}
+
+double CtrlNode::picamAge(double now) const {
+  if (!has_picam_lock_ || !has_filtered_picam_state_) {
+    return std::numeric_limits<double>::infinity();
+  }
+  return now - filtered_picam_state_.t;
+}
+
+double CtrlNode::webcamAge(double now) const {
+  if (!has_latest_webcam_state_ || !latest_webcam_state_.detected) {
+    return std::numeric_limits<double>::infinity();
+  }
+  return now - latest_webcam_state_.t;
+}
+
+bool CtrlNode::hasFreshWebcamTarget(double now) const {
+  return webcamAge(now) <= controller_->config().webcam_measurement_max_age;
+}
+
+void CtrlNode::expirePicamLock(double now) {
+  if (!has_picam_lock_) return;
+  if (picamAge(now) > controller_->config().picam_track_hold_sec) {
+    has_picam_lock_ = false;
+  }
+}
+
+bool CtrlNode::isJointHoldMode(TrackingMode mode) const {
+  return mode == TrackingMode::IDLE || mode == TrackingMode::PICAM_HOLD;
+}
+
+void CtrlNode::updateHoldJointTarget(TrackingMode mode) {
+  if (!isJointHoldMode(mode)) {
+    has_hold_joint_target_ = false;
+    hold_joint_mode_ = mode;
+    return;
+  }
+
+  // No need to update
+  if (has_hold_joint_target_ && hold_joint_mode_ == mode) {
+    return;
+  }
+
+  if (!first_joint_) {
+    RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000, "No /joint sample received yet; skipping joint hold control.");
+    has_hold_joint_target_ = false;
+    hold_joint_mode_ = mode;
+    return;
+  }
+
+  hold_joint_target_ = joint_;
+  hold_joint_mode_ = mode;
+  has_hold_joint_target_ = true;
+}
+
+const Eigen::Vector2d& CtrlNode::holdJointTarget() const {
+  return has_hold_joint_target_ ? hold_joint_target_ : joint_;
+}
+
+RobotState CtrlNode::withLatestJoint(RobotState state) const {
+  state.joint = joint_;
+  state.joint_vel = joint_vel_;
+  return state;
+}
+
+RobotState CtrlNode::filterPicamMeasurement(const RobotState &measurement) {
+  RobotState state = withLatestJoint(measurement);
+
+  const ControlConfig &config = controller_->config();
+  const bool should_reset = !has_filtered_picam_state_ || state.t - filtered_picam_state_.t > config.picam_lpf_reset_gap_sec;
+
+  if (!config.picam_lpf_enabled || should_reset) {
+    filtered_picam_state_ = state;
+    filtered_picam_state_.dt = 0.0;
+    has_filtered_picam_state_ = true;
+    return filtered_picam_state_;
+  }
+
+  const double dt = std::max(0.0, state.t - filtered_picam_state_.t);
+  filtered_picam_state_.p = config.picam_lpf_alpha * filtered_picam_state_.p + (1.0 - config.picam_lpf_alpha) * state.p;
+  filtered_picam_state_.t = state.t;
+  filtered_picam_state_.dt = dt;
+  filtered_picam_state_.img_center = state.img_center;
+  filtered_picam_state_.camera = state.camera;
+  filtered_picam_state_.detected = state.detected;
+  filtered_picam_state_.joint = state.joint;
+  filtered_picam_state_.joint_vel = state.joint_vel;
+  return filtered_picam_state_;
+}
+
+RobotState CtrlNode::reusablePicamState(double now) const {
+  RobotState state = withLatestJoint(filtered_picam_state_);
+  state.detected = false;
+  state.dt = std::max(0.0, now - filtered_picam_state_.t);
+  return state;
+}
+
+// Eigen::Vector2d CtrlNode::webcamSearchOffset(double now) const {
+//   const ControlConfig &config = controller_->config();
+//   const double half_angle = (M_PI / 180) * config.webcam_search_box_half_angle_deg;
+
+//   const double requested_step = (M_PI / 180) * config.webcam_search_box_step_deg;
+//   const int half_steps = std::max(1, static_cast<int>(std::ceil(half_angle / requested_step)));
+//   const double step = half_angle / static_cast<double>(half_steps);
+  
+//   std::vector<Eigen::Vector2d> pattern;
+//   pattern:reserve(static_cast<size_t>((2 * half_steps + 1) * (2 * half_steps + 1)));
+//   pattern.push_back(Eigen::Vector2d::Zero());
+//   for (int pitch_idx = -half_steps; pitch_idx <= half_steps; ++pitch_idx) {
+//     for (int yaw_idx = -half_steps; yaw_idx <= half_steps; ++yaw_idx) {
+//       if (yaw_idx == 0 && pitch_idx == 0) {
+//         continue;
+//       }
+//     }
+//     pattern.emplace_back(static_cast<double>(yaw_idx) * step, static_cast<double>(pitch) * step);
+//   }
+
+// }
+
+
+ControlFSMInput CtrlNode::buildFSMInput(double now) const {
+  ControlFSMInput input;
+  input.has_fresh_picam_target = hasFreshPicamTarget(now);
+  input.has_picam_lock = has_picam_lock_;
+  input.has_fresh_webcam_target = hasFreshWebcamTarget(now);
+  input.picam_age = picamAge(now);
+  input.webcam_age = webcamAge(now);
+  return input;
+}
+
+CtrlNode::ControlTick CtrlNode::executeMode(const ControlFSMOutput &fsm_output, double now) {
+  switch (fsm_output.mode) {
+    case TrackingMode::PICAM_TRACK:
+      return trackPicam(now);
+    case TrackingMode::PICAM_HOLD:
+      return holdPicam(now, picamAge(now));
+    case TrackingMode::WEBCAM_SEARCH:
+      return searchWebcam(now);
+    case TrackingMode::IDLE:
+    default:
+      return holdIdle(now);
+  }
+}
+
+CtrlNode::ControlTick CtrlNode::trackPicam(double now) {
+  ControlTick tick;
+  const bool has_new_measurement = hasNewPicamTarget();
+
+  if (has_new_measurement) {
+    RobotState measurement = latest_picam_state_;
+    last_consumed_picam_time_ = measurement.t;
+    has_picam_lock_ = true;
+
+    tick.raw_state = measurement;
+    tick.has_raw_sample = true;
+    tick.source_age = now - measurement.t;
+    tick.state = filterPicamMeasurement(measurement);
+  } else if (has_filtered_picam_state_) {
+    tick.source_age = picamAge(now);
+    tick.state = reusablePicamState(now);
+  } else {
+    tick.source_age = picamAge(now);
+    tick.state = withLatestJoint(RobotState());
+  }
+
+  tick.state.camera = "picam";
+  tick.control = controller_->computePicamPixelTrack(tick.state);
+  return tick;
+}
+
+CtrlNode::ControlTick CtrlNode::holdPicam(double now, double picam_age) {
+  ControlTick tick;
+  tick.source_age = picam_age;
+  if (has_filtered_picam_state_) {
+    tick.state = reusablePicamState(now);
+  } else if (has_latest_picam_state_) {
+    tick.state = withLatestJoint(latest_picam_state_);
+  } else {
+    tick.state = withLatestJoint(RobotState());
+  }
+  tick.state.camera = "picam";
+  tick.state.detected = false;
+  tick.state.dt = picam_age;
+  tick.control = controller_->computeJointHold(holdJointTarget());
+  return tick;
+}
+
+CtrlNode::ControlTick CtrlNode::searchWebcam(double now) {
+  ControlTick tick;
+  tick.source_age = webcamAge(now);
+  RobotState measurement = latest_webcam_state_;
+
+  tick.raw_state = measurement;
+  tick.has_raw_sample = true;
+  tick.state = withLatestJoint(measurement);  // For webcam, use pure measurement
+  tick.state.camera = "webcam";
+  tick.state.dt = webcamAge(now);
+  tick.control = controller_->computeWebcamAngleSearch(tick.state);
+  return tick;
+}
+
+CtrlNode::ControlTick CtrlNode::holdIdle(double now) {
+  ControlTick tick;
+  tick.source_age = 0.0;
+  tick.state = withLatestJoint(RobotState());
+  tick.state.t = now;
+  tick.control = controller_->computeJointHold(holdJointTarget());
+  return tick;
+}
+
+bool CtrlNode::shouldPublishControl(const ControlFSMOutput &fsm_output) const {
+  if (fsm_output.source == ControlSource::JOINT_HOLD && !first_joint_) {
+    return false;
+  }
+  return true;
+}
+
+void CtrlNode::publishControl(const ControlState &control) {
   custom_msgs::msg::ControlMsg msg;
   msg.header.stamp = this->now();
-  msg.u_yaw = static_cast<float>(x.u_yaw);
-  msg.u_pitch = static_cast<float>(x.u_pitch);
-  msg.fire = x.fire;
-  msg.reload = x.reload;
-  msg.manual = false;
-  msg.ispixel = x.isPixel;
+  msg.u_yaw = static_cast<float>(control.u_yaw);
+  msg.u_pitch = static_cast<float>(control.u_pitch);
+  msg.ispixel = control.isPixel;
   ctrl_pub_->publish(msg);
 }
 
@@ -198,34 +336,28 @@ void CtrlNode::publishWebcamEnabled(bool enabled) {
   webcam_enabled_pub_->publish(msg);
 }
 
-void CtrlNode::publishDebug(const RobotState &estimated_state, const ControlState &control_state,
-                            bool has_raw, bool predicted_only) {
+void CtrlNode::publishDebug(const ControlFSMInput &fsm_input, const ControlFSMOutput &fsm_output, const ControlTick &tick) {
   custom_msgs::msg::TestDebug msg;
   msg.header.stamp = this->now();
-  msg.sample_time = (has_raw && has_raw_state_) ? last_raw_state_.t : estimated_state.t;
-  msg.dt = estimated_state.dt;
+  msg.sample_time = tick.has_raw_sample ? tick.raw_state.t : tick.state.t;
+  msg.dt = std::isfinite(tick.source_age) ? tick.source_age : -1.0;
 
-  if (has_raw_state_) {
-    fillVector2(msg.raw_p, last_raw_state_.p);
-    fillVector2(msg.raw_v, last_raw_state_.v);
-    fillVector2(msg.raw_a, last_raw_state_.a);
-    msg.detected = last_raw_state_.detected;
-    msg.tracked = last_raw_state_.tracked;
+  if (tick.has_raw_sample) {
+    fillVector2(msg.raw_p, tick.raw_state.p);
+    msg.detected = tick.raw_state.detected;
+  } else {
+    msg.detected = tick.state.detected;
   }
 
-  fillVector2(msg.estimated_p, estimated_state.p);
-  fillVector2(msg.estimated_v, estimated_state.v);
-  fillVector2(msg.estimated_a, estimated_state.a);
+  fillVector2(msg.filtered_p, tick.state.p);
 
-  msg.has_raw = has_raw && has_raw_state_;
-  msg.estimator_initialized = estimator_->isInitialized();
-  msg.predicted_only = predicted_only;
-
-  msg.has_control = true;
-  msg.u_yaw = control_state.u_yaw;
-  msg.u_pitch = control_state.u_pitch;
-  msg.fire = control_state.fire;
-  msg.reload = control_state.reload;
+  msg.u_yaw = tick.control.u_yaw;
+  msg.u_pitch = tick.control.u_pitch;
+  msg.tracking_mode = ControlFSM::trackingModeName(fsm_output.mode);
+  msg.control_source = ControlFSM::controlSourceName(fsm_output.source);
+  msg.picam_age = std::isfinite(fsm_input.picam_age) ? fsm_input.picam_age : -1.0;
+  msg.webcam_age = std::isfinite(fsm_input.webcam_age) ? fsm_input.webcam_age : -1.0;
+  msg.source_age = std::isfinite(tick.source_age) ? tick.source_age : -1.0;
 
   debug_pub_->publish(msg);
 }

@@ -1,14 +1,37 @@
 # vision parameters
 vision:
-  target_class:           1
-  confidence:             0.2
+  weight_confidence:      1.0         # Weight for confidence score; select bbox of high confidence
+  weight_distance:        0.002       # Weight for distance score; select bbox which is closer to the previous detection
+
+# Controller parameters 
+controller:
+  image_offset:           [0.0, 0.0]
+  angle_offset:           [0.0, 0.0]
+  Kp:                     [0.0002 , -0.0006] 
+  Kd:                     [0.000, 0.00]
+  
+  frequency:              50        # Frequency of the control node
+  time_delay:             0.1         # Expected time delay during fire (s)
+  picam_track_reuse_sec:  0.25        # Max duration to reuse last filtered picam YOLO pixel
+  picam_track_hold_sec:   1.0         # Max duration to hold current joint before webcam handoff
+  webcam_measurement_max_age: 0.5     # Max age of webcam YOLO measurement for search
+  picam_lpf_enabled:      true        # Smooth picam YOLO pixel jitter before pixel control
+  picam_lpf_alpha:        0.3         # filtered = alpha * previous + (1-alpha) * measurement
+  picam_lpf_reset_gap_sec: 0.25       # Reset LPF after long picam detection gap
+
+# Serial parameters
+bridge:
+  serial:
+    name:                 "usb"
+    port:                 "/dev/ttyACM0"
+    baud:                 115200
+    data_bits:            8
+    stop_bits:            1
+    parity:               0
+    watchdog_frequency:   200
+    write_frequency:      50
 
 # Camera calibration parameters for each camera.
-# Replace each camera's values with the output from scripts/camera_calibration.py.
-# camera_matrix is row-major:
-#   [fx, 0, cx,
-#    0, fy, cy,
-#    0, 0, 1]
 calibration:
   webcam:
     image_width:            1920
@@ -32,52 +55,3 @@ calibration:
        2.4628539198838268e+01, 1.3045414666647437e+00,
        4.7586253753540017e-02, 1.8484701759308766e+00,
        1.1130387953134027e-01, -6.5022652430000250e-01 ]
-
-
-
-# Controller parameters 
-controller:
-  image_offset:           [30.0, 100.0]
-  angle_offset:           [0.0, 0.0]
-  Kp:                     [0.005 , -0.003] 
-  Kd:                     [0.000, 0.00]
-  
-  frequency:              50        # Frequency of the control node
-  time_delay:             0.1         # Expected time delay during fire (s)
-
-  err_p_track:            1e-3        # Error threshold for tracking, position  (pixel)
-  err_v_track:            1e-3        # Error threshold for tracking, velocity  (pixel/s)
-  err_p_fire:             1e-3        # Error threshold for aim, position       (pixel)
-
-
-# Estimator parameters 
-estimator:
-  prediction_time:        0.0
-
-  camera:
-    focal_length:         0.01
-  kalman:
-    q_acc:                1e+5
-    r_detected:           10.0
-    r_tracked:            10.0
-    r_temp_vel:           900
-    r_temp_acc:           54000
-    p0_pos:               10.0
-    p0_vel:               900
-    p0_acc:               54000
-    max_time_gap:         1.0
-    ctrl_max_time_gap:    1.0
-  
-
-
-bridge:
-  serial:
-    name:                 "usb"
-    read_port:            "/dev/ttyTHS1"  # Read frame
-    write_port:           "/dev/ttyACM0"  # Write frame
-    baud:                 115200
-    data_bits:            8
-    stop_bits:            1
-    parity:               0
-    watchdog_frequency:   200
-    write_frequency:      50
