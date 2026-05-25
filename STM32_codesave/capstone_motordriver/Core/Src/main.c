@@ -28,7 +28,6 @@
 #include "arm_math.h"
 #include "core_cm4.h"
 #include "stdio.h"
-#include "stm32g4xx_ll_cordic.h"
 #include "stm32g4xx_ll_bus.h"
 
 /* USER CODE END Includes */
@@ -43,16 +42,12 @@
 
 #define invsqrt3 (0.57735027f)
 #define SECTOR_RAD  (1.04719755f)      // π/3
-#define V_LIMIT (V_BUS * invsqrt3)     // real maximum limit
 #define CPU_HZ (168000000.0f)
 
 #define ARR_TICKS   4199               // TIM1 max ARR
 #define V_BUS (14.8f)                  // input bus voltage
 #define Vd_limit (V_LIMIT * 0.9f)      // Vd limit voltage. 0.98 is safety factor
-
-#define CMD_AIM         (1 << 0)
-#define CMD_SHOOT       (1 << 1)
-#define CMD_STOP        (1 << 2)
+#define V_LIMIT (V_BUS * invsqrt3)     // real maximum limit
 
 #define CAN_CMD_POS_SCALE       1000000.0f   // int32 = rad * 1e6
 #define CAN_CMD_VEL_SCALE       1000.0f      // int16 = rad/s * 1e3
@@ -61,10 +56,6 @@
 #define CAN_FB_VEL_SCALE        1000.0f      // int16 = rad/s * 1e3
 #define CAN_FB_TORQUE_SCALE     1000.0f      // int16 = torque * 1e3
 
-#define MOTOR_ERR_NONE          0x00
-#define MOTOR_ERR_CMD_TIMEOUT   (1 << 0)
-#define MOTOR_ERR_LIMIT         (1 << 1)
-#define MOTOR_ERR_DRV           (1 << 2)
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -80,8 +71,6 @@ DMA_HandleTypeDef hdma_adc1;
 DMA_HandleTypeDef hdma_adc2;
 DMA_HandleTypeDef hdma_adc3;
 
-CORDIC_HandleTypeDef hcordic;
-
 FDCAN_HandleTypeDef hfdcan2;
 
 SPI_HandleTypeDef hspi1;
@@ -91,7 +80,7 @@ TIM_HandleTypeDef htim1;
 
 /* USER CODE BEGIN PV */
 
-#define motor0
+#define motor1
 
 #ifdef motor0
 	#define NODE_ID              0U      // board0 0 / board1 1
@@ -104,15 +93,18 @@ TIM_HandleTypeDef htim1;
 	uint16_t AS5048_mech_zeropos = 12150; // board0 8040 / board1 11500
 
 	// motor electrical angle commutation
-	uint16_t AS5048_zeropos = 12803;   // board0 12803 / board1 10768
+	uint16_t AS5048_zeropos = 12790;   // board0 12790 / board1 10768
 
-	float pos_P = 20.0f;
-	float pos_I = 50.0f;
-	float pos_D = 2.0f;
+	float pos_P = 15.0f;
+	float pos_I = 30.0f;
+	float pos_D = 0.95f;
 
-	/*float pos_P = 25.0f;
-	float pos_I = 0.0f;
-	float pos_D = 2.4f;*/
+	float W_M_LPF_ALPHA = 0.2f;
+
+	#define IQ_REF_LIMIT    (2.0f)
+
+	float POS_I_ENABLE_ERR = 0.1f;   // [rad]
+	float POS_I_LIMIT_RATE = 0.5f;
 #endif
 
 #ifdef motor1
@@ -132,28 +124,23 @@ TIM_HandleTypeDef htim1;
 	float pos_I = 300.0f;
 	float pos_D = 2.5f;*/
 
-	float pos_P = 20.0f;
-	float pos_I = 50.0f;
+	float pos_P = 22.0f;
+	float pos_I = 100.0f;
 	float pos_D = 2.0f;
+
+	float W_M_LPF_ALPHA = 0.2f;
+
+	#define IQ_REF_LIMIT    (5.0f)
+
+	float POS_I_ENABLE_ERR = 0.05f;   // [rad]
+	float POS_I_LIMIT_RATE = 0.5f;
 
 #endif
 
 float mech_limit = PI/2;
 
-#define W_M_LPF_ALPHA     (0.002f)
-
-
-float P_part, I_part, D_part;
-
-#define IQ_REF_LIMIT    (3.0f)
-
-#define POS_I_ENABLE_ERR      (0.5f)   // [rad]
-#define POS_I_LIMIT_RATE      (0.5f)    // 처음에는 0.5 추천
-
 volatile float pos_ref_mech_rad    = 0.0f;
-
-// P 25.0, D 2.4, alpha 0.002
-
+float P_part, I_part, D_part;
 float pos_err, pos_err_integral;
 
 // CAN communication setting
@@ -184,24 +171,22 @@ uint16_t current_A[1];
 uint16_t current_B[1];
 uint16_t current_C[1];
 
-float mech_flip = 1.0f;
-
 #define polepair 7
 float ELEC_CNT = 16384.0f / (float)polepair;
 float P  = 6.0f;
 float I  = 0.4f;
 float Ka = 0.5f;
 
-float iq_ref = 0.0f, id_ref = 0.0f;               // reference current
+float iq_ref = 0.0f, id_ref = 0.0f;                              // reference current
 
 int16_t ia, ib, ic;
 float electrical_angle, _sin, _cos;                              // electrical angle, sin & cos
-float i_alpha, i_alpha_prev, i_alpha_LPF, i_beta, i_beta_prev, i_beta_LPF;                // inv park & clarke
+float i_alpha, i_beta;                                           // inv park & clarke
 float iq, id, iq_err, id_err, iq_err_integral, id_err_integral;  // PI control
 float Vq, Vd, V_alpha, V_beta;                                   // park
 
 uint8_t encoder_cali = 0;
-float V_mag = 1.0f, V_arg = 0.0f, V_cali_speed;
+float V_mag = 4.0f, V_arg = 0.0f, V_cali_speed;
 
 float all_us;
 float cali_sin, cali_cos;
@@ -209,7 +194,7 @@ float cali_sin, cali_cos;
 #define AS5048_CPR        (16384.0f)
 #define AS5048_TO_RAD     (2.0f * PI / AS5048_CPR)
 
-#define POS_CTRL_HZ       (20000.0f)
+#define POS_CTRL_HZ       (200)
 #define POS_CTRL_DT       (1.0f / POS_CTRL_HZ)
 
 float th_m       = 0.0f;   // mechanical angle, wrapped [-pi, pi)
@@ -220,19 +205,8 @@ float w_m_raw    = 0.0f;   // raw mechanical speed [rad/s]
 float th_m_prev    = 0.0f;
 uint8_t th_m_init  = 0U;
 
-volatile uint8_t can_cmd = 0;
-volatile uint8_t can_cmd_seq = 0;
-volatile uint8_t can_last_cmd_seq = 0;
-volatile uint8_t can_cmd_seq_valid = 0;
-volatile uint32_t can_rx_count = 0;
-volatile uint32_t can_tx_count = 0;
-volatile uint32_t can_tx_fail_count = 0;
-volatile uint32_t last_can_cmd_tick = 0;
-volatile float can_target_pos = 0.0f;
-volatile float can_target_vel = 0.0f;
-volatile uint8_t motor_error_code = MOTOR_ERR_NONE;
-
-uint8_t not_aim = 1;
+uint8_t not_aim = 0;
+uint8_t update = 0;;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -246,23 +220,18 @@ static void MX_ADC2_Init(void);
 static void MX_ADC3_Init(void);
 static void MX_SPI3_Init(void);
 static void MX_ADC1_Init(void);
-static void MX_CORDIC_Init(void);
 /* USER CODE BEGIN PFP */
 
 // Forward declarations
 static inline uint32_t dwt_now(void);
 static inline float cycles_to_us(uint32_t cyc);
+
 static inline float wrap_pm_pi(float x);
 static inline float clampf(float x, float lo, float hi);
-static inline uint16_t clamp_u16_i32(int32_t x, uint16_t lo, uint16_t hi);
-static inline int8_t sign_hyst(float x, float eps);
-static inline int8_t sign_hold(float x, float eps, int8_t *last);
-int __io_putchar(int ch);
+
 static inline void DWT_Init(void);
 void set_ccr(uint16_t a, uint16_t b, uint16_t c);
-static inline void CORDIC_Init_Phase(void);
-static inline int32_t float_to_q31(float x);
-static inline float cordic_atan2_rad(float y, float x);
+
 static inline float sat(float x);
 
 void SVPWM(float, float);
@@ -272,7 +241,6 @@ static inline void MechAngleSpeed_Update(void);
 
 static inline int16_t clamp_i16_from_float(float x);
 static inline int32_t get_i32_le(uint8_t *d);
-static inline int16_t get_i16_le(uint8_t *d);
 static inline void put_i16_le(uint8_t *d, int16_t v);
 
 static void Motor_SendStatus(uint8_t seq);
@@ -351,8 +319,11 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim){  //TIM interrupt ra
 
 		arm_sin_cos_f32(electrical_angle,&_sin,&_cos);
 
-		MechAngleSpeed_Update();
-		PositionPID_Update();
+		if(update++ >= 99){
+			MechAngleSpeed_Update();
+			PositionPID_Update();
+			update = 0;
+		}
 
 		// alpha beta current calculation
 		ic = current_A[0] - current_A_calibrated;  // A<->C mapping hardware issue
@@ -410,20 +381,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim){  //TIM interrupt ra
 
 		SVPWM_end = dwt_now();
 
-		/*if(current_log){
-			if(i++ < 10000){
-				current_log_1[i] = iq_ref;
-				current_log_2[i] = iq;
-			}
-		}
-
-		if(flip++ == 49999){
-			iq_ref = -iq_ref;
-			flip = 0;
-		}*/
-
 		all_us               = cycles_to_us(SVPWM_end - debug_time_start);
-
 	}
 	return;
 }
@@ -440,14 +398,12 @@ void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
     if ((RxFifo0ITs & FDCAN_IT_RX_FIFO0_NEW_MESSAGE) == 0)
         return;
 
-    CAN_receive_status =
-        (HAL_FDCAN_GetRxMessage(hfdcan, FDCAN_RX_FIFO0, &Rx_Header, Rx_Data) == HAL_OK);
+    CAN_receive_status = (HAL_FDCAN_GetRxMessage(hfdcan, FDCAN_RX_FIFO0, &Rx_Header, Rx_Data) == HAL_OK);
 
     if (!CAN_receive_status)
         return;
 
     CAN_receive_status = 0;
-    can_rx_count++;
 
     HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_3);  // green LED
 
@@ -461,73 +417,14 @@ void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
 
     int32_t pos_q = get_i32_le(&Rx_Data[0]);
 
-    /*uint8_t P_q = Rx_Data[4];
-    uint8_t D_q = Rx_Data[5];
-
-    pos_P = ((float)P_q / 255.0f) * 100.0f;
-    pos_D = ((float)D_q / 255.0f) * 10.0f;
-
-    if(pos_P > 100.0f) pos_P = 100.0f;
-    if(pos_P < 0.0f)  pos_P = 0.0f;
-
-    if(pos_D > 10.0f) pos_D = 10.0f;
-    if(pos_D < 0.0f) pos_D = 0.0f;*/
-
-    uint8_t cmd = Rx_Data[6];
     uint8_t seq = Rx_Data[7];
 
-    can_target_pos = ((float)pos_q) / CAN_CMD_POS_SCALE;
+    pos_ref_mech_rad = ((float)pos_q) / CAN_CMD_POS_SCALE;
 
-    can_cmd = cmd;
-    can_cmd_seq = seq;
-    last_can_cmd_tick = HAL_GetTick();
-
-    if (can_cmd_seq_valid)
-    {
-        uint8_t expected = can_last_cmd_seq + 1;
-
-        // 일단 에러로 막지는 않고 디버깅용으로만 사용
-        if (seq != expected)
-        {
-            // 필요하면 별도 seq error bit 추가 가능
-        }
-    }
-    else
-    {
-        can_cmd_seq_valid = 1;
-    }
-
-    can_last_cmd_seq = seq;
-
-    if (cmd & CMD_AIM)
-    {
-        float ref = can_target_pos;
-
-        if (ref > mech_limit)
-        {
-            ref = mech_limit;
-            motor_error_code |= MOTOR_ERR_LIMIT;
-        }
-        else if (ref < -mech_limit)
-        {
-            ref = -mech_limit;
-            motor_error_code |= MOTOR_ERR_LIMIT;
-        }
-        else
-        {
-            motor_error_code &= ~MOTOR_ERR_LIMIT;
-        }
-
-        pos_ref_mech_rad = ref;
-        not_aim = 0;
-    }
-    else
-    	not_aim = 1;
-
-    if (DRV8353_status != 0xFF)
-        motor_error_code |= MOTOR_ERR_DRV;
-    else
-        motor_error_code &= ~MOTOR_ERR_DRV;
+	if (pos_ref_mech_rad > mech_limit)
+		pos_ref_mech_rad = mech_limit;
+	else if (pos_ref_mech_rad < -mech_limit)
+		pos_ref_mech_rad = -mech_limit;
 
     Motor_SendStatus(seq);
 }
@@ -573,11 +470,9 @@ int main(void)
   MX_ADC3_Init();
   MX_SPI3_Init();
   MX_ADC1_Init();
-  MX_CORDIC_Init();
   /* USER CODE BEGIN 2 */
 
   DWT_Init();
-  CORDIC_Init_Phase();
 
   // ADC calibration
   ADC_cali_status |= (HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED) == HAL_OK) << 2;
@@ -943,32 +838,6 @@ static void MX_ADC3_Init(void)
 }
 
 /**
-  * @brief CORDIC Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_CORDIC_Init(void)
-{
-
-  /* USER CODE BEGIN CORDIC_Init 0 */
-
-  /* USER CODE END CORDIC_Init 0 */
-
-  /* USER CODE BEGIN CORDIC_Init 1 */
-
-  /* USER CODE END CORDIC_Init 1 */
-  hcordic.Instance = CORDIC;
-  if (HAL_CORDIC_Init(&hcordic) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN CORDIC_Init 2 */
-
-  /* USER CODE END CORDIC_Init 2 */
-
-}
-
-/**
   * @brief FDCAN2 Initialization Function
   * @param None
   * @retval None
@@ -1277,30 +1146,7 @@ static inline float clampf(float x, float lo, float hi){
     return x;
 }
 
-static inline uint16_t clamp_u16_i32(int32_t x, uint16_t lo, uint16_t hi){
-    if (x < (int32_t)lo) return lo;
-    if (x > (int32_t)hi) return hi;
-    return (uint16_t)x;
-}
 
-static inline int8_t sign_hyst(float x, float eps){
-    if (x >  eps) return +1;
-    if (x < -eps) return -1;
-    return 0;
-}
-
-static inline int8_t sign_hold(float x, float eps, int8_t *last){
-    if (x >  eps) { *last = +1; return +1; }
-    if (x < -eps) { *last = -1; return -1; }
-    return *last; // deadband 안에서는 직전 부호 유지
-}
-
-int __io_putchar(int ch)
-{
-    // Write character to ITM ch.0
-    ITM_SendChar(ch);
-    return(ch);
-}
 
 static inline void DWT_Init(void)
 {
@@ -1318,56 +1164,9 @@ void set_ccr(uint16_t a, uint16_t b, uint16_t c){
     TIM1->CCR1 = a; TIM1->CCR2 = b; TIM1->CCR3 = c;
 }
 
-static inline void CORDIC_Init_Phase(void)
-{
-    LL_AHB1_GRP1_EnableClock(LL_AHB1_GRP1_PERIPH_CORDIC);
-
-    // PHASE(atan2) / 2 inputs / 1 output / 32-bit in/out / 적당한 precision
-    LL_CORDIC_Config(CORDIC,
-                     LL_CORDIC_FUNCTION_PHASE,
-                     LL_CORDIC_PRECISION_6CYCLES,   // 필요시 4/6/8 cycles로 타협
-                     LL_CORDIC_SCALE_0,
-                     LL_CORDIC_NBWRITE_2,
-                     LL_CORDIC_NBREAD_1,
-                     LL_CORDIC_INSIZE_32BITS,
-                     LL_CORDIC_OUTSIZE_32BITS);
-}
-
-static inline int32_t float_to_q31(float x)
-{
-    if (x >  0.999999f) x =  0.999999f;
-    if (x < -1.0f)      x = -1.0f;
-    return (int32_t)(x * 2147483648.0f); // 2^31
-}
-
-static inline float cordic_atan2_rad(float y, float x){
-    // 0,0 예외
-//    float ax = fabsf(x), ay = fabsf(y);
-//    float m = (ax > ay) ? ax : ay;
-//    if (m < 1e-12f) return 0.0f;
-
-    float xn = x / measure_limit;
-    float yn = y / measure_limit;
-
-    int32_t Xq = float_to_q31(xn);
-    int32_t Yq = float_to_q31(yn);
-
-    // 입력 write (X, Y)
-    LL_CORDIC_WriteData(CORDIC, (uint32_t)Xq);
-    LL_CORDIC_WriteData(CORDIC, (uint32_t)Yq);
-
-    // 결과 read (각도)
-    int32_t ang_q = (int32_t)LL_CORDIC_ReadData(CORDIC);
-
-    const float Q31_TO_RAD = PI;
-    float ang = ((float)ang_q / 2147483648.0f) * Q31_TO_RAD;
-    return ang;
-}
-
 static inline float sat(float x){
     return clampf(x, -1.0f, 1.0f);
 }
-
 
 static inline float AS5048_CountToMechRad(uint16_t cnt){
     int32_t dcnt = (int32_t)cnt - (int32_t)AS5048_mech_zeropos;
@@ -1432,10 +1231,6 @@ static inline int32_t get_i32_le(uint8_t *d)
                   | ((uint32_t)d[3] << 24));
 }
 
-static inline int16_t get_i16_le(uint8_t *d)
-{
-    return (int16_t)((uint16_t)d[0] | ((uint16_t)d[1] << 8));
-}
 
 static inline void put_i16_le(uint8_t *d, int16_t v)
 {
@@ -1446,7 +1241,6 @@ static inline void put_i16_le(uint8_t *d, int16_t v)
 #define dt_ticks    	  (16.8f)
 #define I_EPS             (0.05f)
 #define SQRT3_BY_2        (0.8660254037844386f)
-static int8_t sa_last=0, sb_last=0, sc_last=0;
 
 void SVPWM(float Valpha, float Vbeta){
     float Vmag;
@@ -1460,7 +1254,7 @@ void SVPWM(float Valpha, float Vbeta){
     float M = 1.73205080f * (Vmag / V_BUS);
     if (M > 0.99f) M = 0.99f;
 
-    float ang = cordic_atan2_rad(Vbeta, Valpha);
+    float ang = atan2f(Vbeta, Valpha);
     if (ang < 0) ang += 6.2831853f;
 
     uint8_t k = (uint8_t)(ang / SECTOR_RAD);
@@ -1487,42 +1281,6 @@ void SVPWM(float Valpha, float Vbeta){
         default:Ua=t1+t2+t0; Ub=t0;        Uc=t1+t0;         break;
     }
 
-    // deadtime compensation
-    float ia_deadtime = i_alpha;
-    float ib_deadtime = -0.5f * i_alpha + SQRT3_BY_2 * i_beta;
-    float ic_deadtime = -0.5f * i_alpha - SQRT3_BY_2 * i_beta;
-
-    int8_t sa = sign_hold(ia_deadtime, I_EPS, &sa_last);
-    int8_t sb = sign_hold(ib_deadtime, I_EPS, &sb_last);
-    int8_t sc = sign_hold(ic_deadtime, I_EPS, &sc_last);
-    int32_t duA = (int32_t) ((float)sa * dt_ticks);
-    int32_t duB = (int32_t) ((float)sb * dt_ticks);
-    int32_t duC = (int32_t) ((float)sc * dt_ticks);
-
-    int32_t duM = (duA + duB + duC) / 3;
-    duA -= duM; duB -= duM; duC -= duM;
-
-    int32_t Ua_c = (int32_t)Ua + duA;
-    int32_t Ub_c = (int32_t)Ub + duB;
-    int32_t Uc_c = (int32_t)Uc + duC;
-
-    int32_t minU = Ua_c;
-    if (Ub_c < minU) minU = Ub_c;
-    if (Uc_c < minU) minU = Uc_c;
-    int32_t maxU = Ua_c;
-    if (Ub_c > maxU) maxU = Ub_c;
-    if (Uc_c > maxU) maxU = Uc_c;
-    if (minU < 0) {
-        Ua_c -= minU; Ub_c -= minU; Uc_c -= minU;
-        maxU -= minU;
-    }
-    if (maxU > ARR_TICKS) {
-        int32_t sh = maxU - ARR_TICKS;
-        Ua_c -= sh; Ub_c -= sh; Uc_c -= sh;
-    }
-    Ua = clamp_u16_i32(Ua_c, 0, ARR_TICKS);
-    Ub = clamp_u16_i32(Ub_c, 0, ARR_TICKS);
-    Uc = clamp_u16_i32(Uc_c, 0, ARR_TICKS);
     set_ccr(ARR_TICKS - Ua, ARR_TICKS - Ub, ARR_TICKS - Uc);
 }
 
@@ -1533,25 +1291,16 @@ static void Motor_SendStatus(uint8_t seq){
 
     pos_q = clamp_i16_from_float(th_m_cont * CAN_FB_POS_SCALE);
     vel_q = clamp_i16_from_float(w_m * CAN_FB_VEL_SCALE);
-
-    // 여기서는 iq_ref를 torque 대신 임시로 보냄.
-    // 실제 토크[Nm]를 보내려면 torque = Kt * iq 형태로 바꾸면 됨.
     torque_q = clamp_i16_from_float(iq * CAN_FB_TORQUE_SCALE);
 
     put_i16_le(&Tx_Data[0], pos_q);
     put_i16_le(&Tx_Data[2], vel_q);
     put_i16_le(&Tx_Data[4], torque_q);
 
-    Tx_Data[6] = motor_error_code;
+    Tx_Data[6] = 0x00;
     Tx_Data[7] = seq;
 
-    CAN_transmit_status =
-        (HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan2, &Tx_Header, Tx_Data) == HAL_OK);
-
-    if (CAN_transmit_status)
-        can_tx_count++;
-    else
-        can_tx_fail_count++;
+    CAN_transmit_status = (HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan2, &Tx_Header, Tx_Data) == HAL_OK);
 }
 
 /* USER CODE END 4 */
