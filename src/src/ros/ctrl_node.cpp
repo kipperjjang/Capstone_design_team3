@@ -54,9 +54,12 @@ void CtrlNode::jointCallback(const custom_msgs::msg::JointMsg::SharedPtr msg) {
   if (msg == nullptr) return;
   if (!first_joint_) first_joint_ = true;
   static size_t count = 1;
+  
+  // LPF alpha
+  const double alpha = 0.3;
 
-  joint_ = toEigen(msg->joint);
-  joint_vel_ = toEigen(msg->joint_vel);
+  joint_ = alpha * joint_ + (1-alpha) * toEigen(msg->joint);
+  joint_vel_ = alpha * joint_ + (1-alpha) * toEigen(msg->joint_vel);
 
   joint_buffer_ = joint_buffer_ + joint_vel_;
   joint_mean_ = joint_buffer_ / count;
@@ -288,7 +291,7 @@ void CtrlNode::decideFire(const RobotState &state, ControlState &control) {
   // Joint velocity에 따라 offset (buffer 0.5s); 
   // std::cout << joint_mean_.transpose() << std::endl;
   
-  if (joint_mean_(1) < -config.edge_joint_threshold(1)) {
+  if (joint_vel_(1) < -config.edge_joint_threshold(1)) {
     control.u_pitch = control.u_pitch + config.pixel_offset(1);
   }
   // else if (joint_mean_(1) <= config.edge_joint_threshold(1)) {
@@ -297,17 +300,17 @@ void CtrlNode::decideFire(const RobotState &state, ControlState &control) {
 
   // if (fire) {
   //   std::cout << "2\t" << fire;
-  if (joint_mean_(0) < config.edge_joint_threshold(0)) {
+  if (joint_vel_(0) < config.edge_joint_threshold(0)) {
     control.u_yaw = control.u_yaw - config.pixel_offset(0);
-  } else if (joint_mean_(0) > config.edge_joint_threshold(0)) {
+  } else if (joint_vel_(0) > config.edge_joint_threshold(0)) {
     control.u_yaw = control.u_yaw + config.pixel_offset(0);
   } 
   
-  if (joint_mean_.norm() < config.vel_norm_threshold) {
-    fire &= false;
-  }
+  // if (joint_vel_.norm() < config.vel_norm_threshold) {
+  //   fire &= false;
+  // }
   
-  std::cout << "3\t" << fire << std::endl;
+  // std::cout << "3\t" << fire << std::endl;
   control.update(fire);
 }
 
@@ -333,7 +336,7 @@ CtrlNode::ControlTick CtrlNode::trackPicam(double now) {
     tick.state = withLatestJoint(RobotState());
   }
 
-  tick.control = controller_->computePicamPixelTrack(tick.state);
+  tick.control = controller_->computeWebcamAngleSearch(tick.state);
   decideFire(tick.state, tick.control);
   
   tick.state.camera = "picam";

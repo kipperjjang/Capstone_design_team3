@@ -5,11 +5,11 @@ vision:
 
 # Controller parameters 
 controller:
-  image_offset:           [0.0, 0.0]
+  image_offset:           [0.0, 10.0]
   pixel_offset:           [0.0, 0.0]
   edge_joint_threshold:   [5e-2, 1e-2]
-  vel_norm_threshold:     1e-2
-  Kp:                     [0.0002 , -0.0006] 
+  vel_norm_threshold:      5e-2
+  Kp:                     [0.0002 , -0.0005] 
   Kd:                     [0.000, 0.00]
   
   frequency:              50        # Frequency of the control node

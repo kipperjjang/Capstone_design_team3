@@ -112,9 +112,9 @@ def generate_launch_description():
   )
 
   return LaunchDescription([
-    DeclareLaunchArgument('enable_debug', default_value='true'),
+    DeclareLaunchArgument('enable_debug', default_value='false'),
     DeclareLaunchArgument('publish_image', default_value='true'),
-    DeclareLaunchArgument('enable_webcam', default_value='true'),
+    DeclareLaunchArgument('enable_webcam', default_value='false'),
     DeclareLaunchArgument('enable_picam', default_value='true'),
     bridge_node,
     ctrl_node,

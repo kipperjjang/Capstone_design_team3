@@ -152,8 +152,8 @@ class VisionNode(Node):
     self.declare_parameter("debug_image_height", 540)
     self.declare_parameter("debug_image_fps", 10.0)
     self.declare_parameter("debug_jpeg_quality", 50) # range of the value : 0 ~ 100
-    self.declare_parameter("debug_draw_text", False)
-    self.declare_parameter("debug_draw_bbox", False)
+    self.declare_parameter("debug_draw_text", True)
+    self.declare_parameter("debug_draw_bbox", True)
 
     self.declare_parameter("enable_mjpeg_stream", True)
     self.declare_parameter("mjpeg_host", "0.0.0.0")
