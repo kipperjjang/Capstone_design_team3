@@ -1,0 +1,1676 @@
+/* USER CODE BEGIN Header */
+/**
+  ******************************************************************************
+  * @file           : main.c
+  * @brief          : Main program body
+  ******************************************************************************
+  * @attention
+  *
+  * Copyright (c) 2025 STMicroelectronics.
+  * All rights reserved.
+  *
+  * This software is licensed under terms that can be found in the LICENSE file
+  * in the root directory of this software component.
+  * If no LICENSE file comes with this software, it is provided AS-IS.
+  *
+  ******************************************************************************
+  */
+/* USER CODE END Header */
+/* Includes ------------------------------------------------------------------*/
+#include "main.h"
+
+/* Private includes ----------------------------------------------------------*/
+/* USER CODE BEGIN Includes */
+
+//#include "DRV8323_setting.h"
+#include "DRV8353_setting.h"
+#include "AS5048A.h"
+#include "arm_math.h"
+#include "core_cm4.h"
+#include "stdio.h"
+#include "stm32g4xx_ll_cordic.h"
+#include "stm32g4xx_ll_bus.h"
+
+/* USER CODE END Includes */
+
+/* Private typedef -----------------------------------------------------------*/
+/* USER CODE BEGIN PTD */
+
+/* USER CODE END PTD */
+
+/* Private define ------------------------------------------------------------*/
+/* USER CODE BEGIN PD */
+
+#define invsqrt3 0.57735027
+#define SECTOR_RAD  1.04719755f   // π/3
+#define V_LIMIT (V_BUS * invsqrt3)         // real maximum limit
+#define CPU_HZ 168000000UL
+
+#define ARR_TICKS   4199          // TIM1 max ARR
+#define V_BUS 24                  // input bus voltage
+#define Vd_limit (V_LIMIT * 0.9)           // Vd limit voltage. 0.98 is safety factor -> 0.9, leave some voltage to injection
+#define peak_current_limit 20.0f
+#define measure_limit (V_BUS * 2)  //atan2 limit. change for max voltage or max current
+
+/* USER CODE END PD */
+
+/* Private macro -------------------------------------------------------------*/
+/* USER CODE BEGIN PM */
+
+/* USER CODE END PM */
+
+/* Private variables ---------------------------------------------------------*/
+ADC_HandleTypeDef hadc1;
+ADC_HandleTypeDef hadc2;
+ADC_HandleTypeDef hadc3;
+DMA_HandleTypeDef hdma_adc1;
+DMA_HandleTypeDef hdma_adc2;
+DMA_HandleTypeDef hdma_adc3;
+
+CORDIC_HandleTypeDef hcordic;
+
+FDCAN_HandleTypeDef hfdcan2;
+
+SPI_HandleTypeDef hspi1;
+SPI_HandleTypeDef hspi3;
+
+TIM_HandleTypeDef htim1;
+
+/* USER CODE BEGIN PV */
+
+// CAN communication setting
+uint32_t CAN_error;
+uint8_t CAN_setting_status = 0;
+uint8_t CAN_transmit_status = 0;
+uint8_t CAN_receive_status;
+
+uint32_t              Tx_Mailbox;
+FDCAN_TxHeaderTypeDef   Tx_Header;
+uint8_t               Tx_Data[8];
+
+FDCAN_FilterTypeDef  sFilter;
+FDCAN_RxHeaderTypeDef   Rx_Header;
+uint8_t               Rx_Data[8];
+
+
+
+// PWM start status. CH1_start / CH2_start / CH3_start / TIM1_ISR_start / ADC1_start / ADC2_start / ADC3_start / ALL_OK
+uint8_t PWM_ADC_status = 0;
+// DRV8353 setting status. 0x00 / 0x01 / 0x02 / 0x03 / 0x04 / 0x05 / 0x06 / ALL_OK
+uint8_t DRV8353_status = 0;
+
+uint8_t ADC_cali_status;
+
+uint16_t current_A[1];
+uint16_t current_B[1];
+uint16_t current_C[1];
+
+// ADC calibrated value (different for each board and chip)
+#define current_A_calibrated 2036
+#define current_B_calibrated 2056
+#define current_C_calibrated 2031
+
+// HFI motor
+uint16_t AS5048_zeropos = 8397;
+#define polepair 7
+#define P 1.2
+#define I 0.05
+#define Ka 0.1
+
+float iq_ref = 0.0, id_ref;               // reference current
+
+float ELEC_CNT = 16384.0f / (float)polepair;
+
+int16_t ia, ib, ic;
+float electrical_angle, _sin, _cos;                              // electrical angle, sin & cos
+float i_alpha, i_alpha_prev, i_alpha_LPF, i_beta, i_beta_prev, i_beta_LPF;                // inv park & clarke
+float iq, id, iq_err, id_err, iq_err_integral, id_err_integral;  // PI control
+float Vq, Vd, V_alpha, V_beta;                                   // park
+
+// encoder calibration setting
+uint8_t encoder_cali = 0;                // turn on encoder calibration
+float V_mag = 0.0, V_arg = 0.0, V_cali_speed = 0.0;
+
+uint8_t HFI_test = 1;
+
+uint8_t log_on = 0;
+uint8_t log_dump = 0;
+uint16_t log_num = 0;
+uint8_t ITM_error = 0;
+
+float V_injected = -1.0;
+float Valpha_injected = 0.0, Vbeta_injected = 0.0;
+
+// HFI 상태 저장용
+float i_alpha_prev_HFI = 0.0;
+float i_beta_prev_HFI  = 0.0;
+uint8_t have_prev_HFI  = 0;
+uint8_t have_prev_estimation  = 0;
+
+float estimated_electrical_angle = 0.0;
+float theta_e_est_rad = 0.0;
+float theta_e_est_rad_prev;
+uint32_t log_jump = 0;
+uint32_t count = 0;
+uint8_t flag = 1;
+
+uint8_t angle_flip = 0;
+float delta_i_alpha, delta_i_beta;
+
+#define POS_DT 0.00005f
+#define IQ_REF_LIMIT    (1.0f)
+volatile float theta_e_wrapped_rad = 0.0f;   // (-pi, pi]로 wrap된 HFI 전기각
+volatile float theta_e_cont_rad    = 0.0f;   // unwrapped 전기각(연속)
+volatile float pos_mech_rad        = 0.0f;   // 연속 기계각
+
+volatile float pos_ref_mech_rad    = 0.0f;   // 입력: 기계각[rad] (외부에서 갱신)
+
+float pos_P = 1.0f;
+float pos_D = 0.0f;
+
+float flip_sign = 1.0;
+float P_part, D_part;
+float theta_e_est_rad_PLL = 0.0;
+float theta_e_est_rad_EMF;
+/* USER CODE END PV */
+
+/* Private function prototypes -----------------------------------------------*/
+void SystemClock_Config(void);
+static void MX_GPIO_Init(void);
+static void MX_DMA_Init(void);
+static void MX_FDCAN2_Init(void);
+static void MX_TIM1_Init(void);
+static void MX_SPI1_Init(void);
+static void MX_ADC2_Init(void);
+static void MX_ADC3_Init(void);
+static void MX_SPI3_Init(void);
+static void MX_ADC1_Init(void);
+static void MX_CORDIC_Init(void);
+/* USER CODE BEGIN PFP */
+
+void SVPWM(float, float);
+
+
+static inline void CORDIC_Init_Phase(void)
+{
+    LL_AHB1_GRP1_EnableClock(LL_AHB1_GRP1_PERIPH_CORDIC);
+
+    // PHASE(atan2) / 2 inputs / 1 output / 32-bit in/out / 적당한 precision
+    LL_CORDIC_Config(CORDIC,
+                     LL_CORDIC_FUNCTION_PHASE,
+                     LL_CORDIC_PRECISION_6CYCLES,   // 필요시 4/6/8 cycles로 타협
+                     LL_CORDIC_SCALE_0,
+                     LL_CORDIC_NBWRITE_2,
+                     LL_CORDIC_NBREAD_1,
+                     LL_CORDIC_INSIZE_32BITS,
+                     LL_CORDIC_OUTSIZE_32BITS);
+}
+
+static inline int32_t float_to_q31(float x)
+{
+    if (x >  0.999999f) x =  0.999999f;
+    if (x < -1.0f)      x = -1.0f;
+    return (int32_t)(x * 2147483648.0f); // 2^31
+}
+
+static inline float cordic_atan2_rad(float y, float x){
+    // 0,0 예외
+//    float ax = fabsf(x), ay = fabsf(y);
+//    float m = (ax > ay) ? ax : ay;
+//    if (m < 1e-12f) return 0.0f;
+
+    float xn = x / measure_limit;
+    float yn = y / measure_limit;
+
+    int32_t Xq = float_to_q31(xn);
+    int32_t Yq = float_to_q31(yn);
+
+    // 입력 write (X, Y)
+    LL_CORDIC_WriteData(CORDIC, (uint32_t)Xq);
+    LL_CORDIC_WriteData(CORDIC, (uint32_t)Yq);
+
+    // 결과 read (각도)
+    int32_t ang_q = (int32_t)LL_CORDIC_ReadData(CORDIC);
+
+    const float Q31_TO_RAD = (float)M_PI;
+    float ang = ((float)ang_q / 2147483648.0f) * Q31_TO_RAD;
+    return ang;
+}
+
+int __io_putchar(int ch)
+{
+ // Write character to ITM ch.0
+ ITM_SendChar(ch);
+ return(ch);
+}
+
+static inline void DWT_Init(void)
+{
+    // DWT 사용 허용
+    CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+
+    // 사이클 카운터 리셋
+    DWT->CYCCNT = 0;
+
+    // 사이클 카운터 enable
+    DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
+}
+
+static inline uint32_t dwt_now(void) { return DWT->CYCCNT; }
+
+static inline uint32_t cycles_to_us(uint32_t cyc){
+    return (uint32_t)((uint64_t)cyc * 1000000ULL / CPU_HZ);
+}
+
+static inline float wrap_pm_pi(float x){
+    while (x >= PI)  x -= 2.0f * PI;
+    while (x < -PI)  x += 2.0f * PI;
+    return x;
+}
+
+
+/* USER CODE END PFP */
+
+/* Private user code ---------------------------------------------------------*/
+/* USER CODE BEGIN 0 */
+
+uint8_t OC_flag = 1;
+
+uint32_t debug_time_start;
+
+volatile float th_m_est_rad  = 0.0f;  // mech angle estimate (continuous) [rad]
+volatile float w_m_est_rads  = 0.0f;  // mech speed estimate [rad/s]
+
+#define w_m_max (50.0f)
+
+static inline void PositionPD_Update_FromHFI(void){
+    float th_m = th_m_est_rad;
+    float w_m  = w_m_est_rads;
+
+    float e = pos_ref_mech_rad - th_m;
+
+    P_part = pos_P * e;
+    D_part = -pos_D * w_m;
+
+    float iq_cmd = flip_sign * (P_part + D_part);
+
+    if(w_m_est_rads > w_m_max){
+    	if(iq_cmd > 0){
+    		iq_cmd = 0;
+    	}
+    }
+    else if(w_m_est_rads < -w_m_max){
+    	if(iq_cmd < 0){
+    	    iq_cmd = 0;
+    	}
+    }
+
+    iq_cmd = (iq_cmd > IQ_REF_LIMIT) ? IQ_REF_LIMIT :
+             (iq_cmd < -IQ_REF_LIMIT) ? -IQ_REF_LIMIT : iq_cmd;
+
+    //iq_ref = iq_cmd;
+    //iq_ref = 0;
+}
+
+static inline float clampf(float x, float lo, float hi){
+    if(x < lo) return lo;
+    if(x > hi) return hi;
+    return x;
+}
+/*
+#define HFI_UPDATE_HZ   (10000.0f)
+#define PLL_TS          (1.0f / HFI_UPDATE_HZ)
+
+// 튜닝: 먼저 30Hz 권장(리플 억제 우선). 느리면 50Hz
+#define PLL_ZETA        (0.707f)
+#define PLL_FN_HZ       (100.0f)
+#define PLL_WN          (2.0f * (float)M_PI * PLL_FN_HZ)
+
+#define PLL_L1          (2.0f * PLL_ZETA * PLL_WN) // [1/s]
+#define PLL_L2          (PLL_WN * PLL_WN)          // [1/s^2]
+
+static float th_e_hat = 0.0f;       // wrapped electrical angle estimate [rad]
+static float we_hat   = 0.0f;       // electrical speed estimate [rad/s]
+#define w_m_alpha (0.02f)
+static float th_e_cont = 0.0f;      // continuous electrical angle [rad]
+
+static inline float PosEst_PLL_Update_FromHFI(float th_e_meas){
+    static uint8_t inited = 0;
+
+    static float integ_e  = 0.0f;       // integral of phase error [rad*s]
+
+    static float th_e_hat_prev = 0.0f;  // for continuous build
+
+
+    static float w_m_lpf_prev = 0.0f;   // mech speed LPF state
+
+    if(!inited){
+        th_e_hat = th_e_meas;
+        th_e_hat_prev = th_e_hat;
+        we_hat = 0.0f;
+        integ_e = 0.0f;
+        th_e_cont = th_e_meas;
+
+        th_m_est_rad = th_e_cont / polepair;
+        w_m_est_rads = 0.0f;
+
+        inited = 1;
+        return th_e_hat;
+    }
+
+    // 1) phase error
+    float e = wrap_pm_pi(th_e_meas - th_e_hat);
+
+    // 2) integral + anti-windup
+    integ_e += e * PLL_TS;
+
+    // 3) PI -> speed
+    we_hat = (PLL_L1 * e) + (PLL_L2 * integ_e);
+
+    // 4) integrate to wrapped angle
+    th_e_hat = wrap_pm_pi(th_e_hat + we_hat * PLL_TS);
+
+    // 5) continuous electrical angle
+    float dth_hat = wrap_pm_pi(th_e_hat - th_e_hat_prev);
+    th_e_hat_prev = th_e_hat;
+    th_e_cont += dth_hat;
+
+    // 6) mech angle & speed (shared)
+    float th_m = th_e_cont / polepair;
+    float w_m  = we_hat / polepair;
+
+    w_m = w_m_alpha * w_m + (1.0f - w_m_alpha) * w_m_lpf_prev;
+    w_m_lpf_prev = w_m;
+
+    th_m_est_rad = th_m;
+    w_m_est_rads = w_m;
+
+    return th_e_hat; // <-- PLL filtered electrical angle (wrapped)
+}
+*/
+
+// ========= Common PLL (20kHz) =========
+#define PLL_FS          (20000.0f)
+#define PLL_TS          (1.0f / PLL_FS)
+#define PLL_ZETA        (0.707f)
+
+// wn scheduling (Hz) : 관절용 시작값 추천
+#define PLL_FN_LOW_HZ   (200.0f)     // 저속(HFI 우세)에서 느리게
+#define PLL_FN_HIGH_HZ  (500.0f)    // 중속~(EMF 우세)에서 빠르게
+
+#define PLL_WN_LOW      (2.0f * (float)M_PI * PLL_FN_LOW_HZ)
+#define PLL_WN_HIGH     (2.0f * (float)M_PI * PLL_FN_HIGH_HZ)
+
+// smoothing for wn (few ms)
+#define PLL_WN_ALPHA    (0.8f)
+
+// weight schedule in electrical rad/s
+#define W_EMF_LOW       (200.0f)    // 이 아래에서는 EMF 신뢰 낮음
+#define W_EMF_HIGH      (400.0f)   // 이 이상에서는 EMF 위주
+
+// public outputs (share with your code)
+static float th_e_hat_wrapped = 0.0f;   // wrapped electrical angle [rad]
+static float we_hat_rads      = 0.0f;   // electrical speed [rad/s]
+static float th_e_cont        = 0.0f;   // continuous electrical angle [rad]
+
+// mech shared
+#define w_m_alpha (0.02f)
+
+// internal
+static uint8_t pll_inited = 0;
+static float integ_e = 0.0f;
+static float th_e_hat_prev = 0.0f;
+static float wn_f = PLL_WN_LOW;
+static float w_m_lpf_prev = 0.0f;
+
+static inline float weight_emf_from_we(float we_abs){
+    float w = (we_abs - W_EMF_LOW) / (W_EMF_HIGH - W_EMF_LOW);
+    return clampf(w, 0.0f, 1.0f);
+}
+
+/**
+ * @brief Common PLL update using both HFI & EMF angle measurements.
+ *
+ * Inputs:
+ *  - th_hfi_meas : electrical angle from HFI (wrapped, rad)
+ *  - th_emf_meas : electrical angle from EMF (wrapped, rad)  (already -pi/2 compensated!)
+ *
+ * Notes:
+ *  - Call at 20kHz (every ADC callback after currents/observers updated).
+ *  - It blends errors, not angles.
+ *  - wn is scheduled by speed/weight, smoothed.
+ */
+static inline float PosEst_PLL_Update_Common(float th_hfi_meas, float th_emf_meas){
+    if(!pll_inited){
+        // initialize with HFI (usually more reliable at standstill)
+        th_e_hat_wrapped = th_hfi_meas;
+        th_e_hat_prev    = th_e_hat_wrapped;
+        th_e_cont        = th_hfi_meas;
+        we_hat_rads      = 0.0f;
+        integ_e          = 0.0f;
+
+        th_m_est_rad     = th_e_cont / polepair;
+        w_m_est_rads     = 0.0f;
+
+        wn_f             = PLL_WN_LOW;
+        w_m_lpf_prev     = 0.0f;
+
+        pll_inited = 1;
+        return th_e_hat_wrapped;
+    }
+
+    // 1) weights
+    float we_abs = fabsf(we_hat_rads);
+    float w_emf  = weight_emf_from_we(we_abs);
+    float w_hfi  = 1.0f - w_emf;
+
+    // 2) phase detector (blend errors, NOT angles)
+    float e_hfi = wrap_pm_pi(th_hfi_meas - th_e_hat_wrapped);
+    float e_emf = wrap_pm_pi(th_emf_meas - th_e_hat_wrapped);
+    float e     = w_hfi * e_hfi + w_emf * e_emf;
+
+    // 3) schedule PLL bandwidth (wn) using w_emf
+    float wn_tgt = (1.0f - w_emf) * PLL_WN_LOW + w_emf * PLL_WN_HIGH;
+    wn_f = PLL_WN_ALPHA * wn_f + (1.0f - PLL_WN_ALPHA) * wn_tgt;
+
+    float L1 = 2.0f * PLL_ZETA * wn_f;     // [1/s]
+    float L2 = wn_f * wn_f;                // [1/s^2]
+
+    // 4) integrate phase error
+    integ_e += e * PLL_TS;
+
+    // 5) PI -> electrical speed
+    we_hat_rads = (L1 * e) + (L2 * integ_e);
+
+    // optional speed clamp to avoid crazy spikes during bring-up
+    // we_hat_rads = clampf(we_hat_rads, -8000.0f, 8000.0f);
+
+    // 6) integrate to wrapped angle
+    th_e_hat_wrapped = wrap_pm_pi(th_e_hat_wrapped + we_hat_rads * PLL_TS);
+
+    // 7) continuous electrical angle build
+    float dth = wrap_pm_pi(th_e_hat_wrapped - th_e_hat_prev);
+    th_e_hat_prev = th_e_hat_wrapped;
+    th_e_cont += dth;
+
+    // 8) mech angle & speed (shared)
+    float th_m = th_e_cont / polepair;
+    float w_m  = we_hat_rads / polepair;
+
+    // LPF mech speed for D-term stability
+    w_m = w_m_alpha * w_m + (1.0f - w_m_alpha) * w_m_lpf_prev;
+    w_m_lpf_prev = w_m;
+
+    th_m_est_rad = th_m;
+    w_m_est_rads = w_m;
+
+    return th_e_hat_wrapped;
+}
+
+
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim){  //TIM interrupt rank has to be added in main()
+	if(htim->Instance == TIM1){
+		HAL_GPIO_WritePin(GPIOC, GPIO_PIN_4, 1);
+		//position PD
+		PositionPD_Update_FromHFI();
+
+		//debug_time_start = dwt_now();
+	}
+}
+
+#define current_const 0.00805664*2  // 10V/V Op-amp gain
+uint8_t first = 1;
+float get_flip_start, get_flip_end, get_flip_start_prev, get_flip_end_prev;
+#define flip_alpha 0.5
+
+#define Ts (0.00005f)
+#define Rs (0.765f)
+#define Ls (0.0002102f)  // LCR meter phase to phase is 335.5uH ~ 505.3uH at 10k measure
+#define R_over_L (Rs / Ls)
+#define invL (1/Ls)
+
+float i_hat_alpha = 0.0, i_hat_beta = 0.0;
+float e_hat_alpha = 0.0, e_hat_beta = 0.0;
+
+#define WO_MIN    (200.0f)
+#define WO_MAX    (3000.0f)
+#define WO_ALPHA  (0.99f)
+#define ZETA      (0.707f)
+
+static float wo_f = WO_MIN;
+
+void EMF_observer_update(){
+    // 전류는 이미 (i + i_prev)/2 로 들어오는 i_alpha_LPF/i_beta_LPF 사용
+    float s_alpha = i_alpha_LPF - i_hat_alpha;
+    float s_beta  = i_beta_LPF  - i_hat_beta;
+
+    // 1) bandwidth schedule + smoothing
+    float wo_tgt = 4.0f * fabsf(we_hat_rads);
+    wo_tgt = clampf(wo_tgt, WO_MIN, WO_MAX);
+    wo_f = WO_ALPHA * wo_f + (1.0f - WO_ALPHA) * wo_tgt;
+
+    // 2) gains
+    float k_i = 2.0f * ZETA * wo_f - R_over_L;
+    float k_e = Ls * wo_f * wo_f;
+
+    // 3) update (use previous applied voltage!)
+    i_hat_alpha += Ts * ( -R_over_L * i_hat_alpha + invL*V_alpha - invL*e_hat_alpha + k_i*s_alpha );
+    i_hat_beta  += Ts * ( -R_over_L * i_hat_beta  + invL*V_beta  - invL*e_hat_beta  + k_i*s_beta  );
+
+    e_hat_alpha += Ts * ( k_e * s_alpha );
+    e_hat_beta  += Ts * ( k_e * s_beta  );
+
+    // 디버그/폭주 방지용(가능하면 0.9*Vdc로)
+    // e_hat_alpha = clampf(e_hat_alpha, -ECLAMP, ECLAMP);
+    // e_hat_beta  = clampf(e_hat_beta,  -ECLAMP, ECLAMP);
+}
+
+uint8_t flip_flag = 1;
+volatile uint8_t done = 0;
+
+void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc){  //ADC conversion complete callback, spend 5.2us to conversion
+	if      (hadc->Instance == ADC1) done |= (1<<0);
+	else if (hadc->Instance == ADC2) done |= (1<<1);
+	else if (hadc->Instance == ADC3) done |= (1<<2);
+
+	if(done == 7){
+		done = 0;
+
+		// alpha beta current calculation
+		ic = current_A[0] - current_A_calibrated;  // A<->C mapping hardware issue
+		ib = current_B[0] - current_B_calibrated;
+		//ia = current_C[0] - current_C_calibrated;  // A<->C mapping hardware issue
+		ia = -(ib+ic); // ia is very unstable. currnet_C has big jitter (+-10 LSB) (maybe hardware PCB problem. maybe charge pump?)
+
+		// inv clarke
+		i_alpha = ia * current_const;                   // i_alpha = 2/3 * (ia - (ib + ic)/2) = ia
+		i_beta  = (ib - ic) * invsqrt3 * current_const; // i_beta  = 2/3 * (ib - ic) * sqrt(3)/2 = (ib - ic) * 1/sqrt(3)
+
+		// digital LPF(mean sum)
+		i_alpha_LPF = (i_alpha + i_alpha_prev) * 0.5;
+		i_beta_LPF  = (i_beta  + i_beta_prev)  * 0.5;
+		i_alpha_prev = i_alpha;
+		i_beta_prev  = i_beta;
+
+		// back-EMF start
+		EMF_observer_update();
+
+		theta_e_est_rad_EMF = wrap_pm_pi(cordic_atan2_rad(e_hat_beta, e_hat_alpha) - 0.5f*PI);
+
+		// HFI start
+		if(HFI_test){
+			// rotor angle estimation with HFI
+			if(have_prev_HFI){
+				delta_i_alpha = i_alpha - i_alpha_prev_HFI;
+				delta_i_beta  = i_beta  - i_beta_prev_HFI;
+
+				if(V_injected < 0){
+					delta_i_alpha = - delta_i_alpha;
+					delta_i_beta  = - delta_i_beta;
+				}
+
+				//theta_e_est_rad = atan2f(delta_i_beta, delta_i_alpha);
+				theta_e_est_rad = cordic_atan2_rad(delta_i_beta, delta_i_alpha);
+
+				if(have_prev_estimation){
+					float case1 = theta_e_est_rad;
+					float case2 = theta_e_est_rad + PI;
+
+					if(fabsf(wrap_pm_pi(case1 - theta_e_est_rad_prev)) > fabsf(wrap_pm_pi(case2 - theta_e_est_rad_prev))){
+						//theta_e_est_rad = case2;
+						angle_flip = 1;
+					}
+					else{
+						//theta_e_est_rad = case1;
+						angle_flip = 0;
+					}
+				}
+
+				theta_e_est_rad_PLL = PosEst_PLL_Update_Common(theta_e_est_rad, theta_e_est_rad_EMF);
+
+				theta_e_est_rad_prev = theta_e_est_rad_PLL;
+
+				have_prev_estimation = 1;
+
+				estimated_electrical_angle = theta_e_est_rad_PLL * (180.0f / PI);
+				theta_e_wrapped_rad = theta_e_est_rad_PLL;
+			}
+
+			i_alpha_prev_HFI = i_alpha;
+			i_beta_prev_HFI  = i_beta;
+			have_prev_HFI    = 1;
+
+			arm_sin_cos_f32(estimated_electrical_angle,&_sin,&_cos);
+
+			if(count < 19999){ //estimate start, wait estimation converge
+				V_alpha = 1.0f + V_injected * _cos;
+				V_beta =  0.0f + V_injected * _sin;
+				count++;
+			}
+			/*else if(count < 79999){ // for torque control, get axis flip or not
+				if(count < 40000){
+					get_flip_start = theta_e_est_rad_PLL * flip_alpha + (1 - flip_alpha) * get_flip_start_prev;
+					get_flip_start_prev = get_flip_start;
+
+					V_alpha = 1.0f + V_injected * _cos;
+					V_beta =  0.0f + V_injected * _sin;
+				}
+				else if(count < 70000){
+					get_flip_end = theta_e_est_rad_PLL * flip_alpha + (1 - flip_alpha) * get_flip_end_prev;
+					get_flip_end_prev = get_flip_end;
+
+					V_alpha = 0.0f + V_injected * _cos;
+					V_beta =  1.0f + V_injected * _sin;
+				}
+				else{
+					if((get_flip_end - get_flip_start) > 0)
+						flip_sign = -1;
+					else
+						flip_sign = 1;
+
+					V_alpha = V_injected * _cos;
+					V_beta  = V_injected * _sin;
+				}
+				count++;
+			}*/
+			else if(count == 20000){
+				we_hat_rads = 0.0;
+				pos_ref_mech_rad = 0.0;
+				th_e_cont = 0;
+				V_alpha = 1.0f + V_injected * _cos;
+				V_beta =  0.0f + V_injected * _sin;
+				count++;
+			}
+			else{
+				if(count < 35000){
+					if(flip_flag){
+						if(w_m_est_rads > 30.0f){
+							flip_sign = -flip_sign;
+							flip_flag = 0;
+						}
+						else if(w_m_est_rads < -30.0f){
+							flip_sign = -flip_sign;
+							flip_flag = 0;
+						}
+					}
+					count++;
+				}
+
+				// inv park, using high frequency rejected
+				id =  i_alpha_LPF * _cos + i_beta_LPF * _sin;
+				iq = -i_alpha_LPF * _sin + i_beta_LPF * _cos;
+
+				//PI
+				iq_err = iq_ref - iq;
+				id_err = id_ref - id;
+				iq_err_integral = iq_err_integral + iq_err;
+				id_err_integral = id_err_integral + id_err;
+
+				// Vq, Vd calculation
+				float Vq_unsat = (P * iq_err) + (I * iq_err_integral);
+				float Vd_unsat = (P * id_err) + (I * id_err_integral) + V_injected; // d axis injection
+
+				Vd = (Vd_unsat > Vd_limit) ? Vd_limit : (Vd_unsat < -Vd_limit) ? -Vd_limit : Vd_unsat;
+
+				float Vq_limit;
+				arm_sqrt_f32((V_LIMIT*V_LIMIT) - (Vd*Vd), &Vq_limit);
+				Vq_limit = Vq_limit * 0.9; // 0.9 for leave injection voltage
+				Vq = (Vq_unsat > Vq_limit) ? Vq_limit : (Vq_unsat < -Vq_limit) ? -Vq_limit : Vq_unsat;
+
+				iq_err_integral = iq_err_integral - Ka*(Vq_unsat - Vq);
+				id_err_integral = id_err_integral - Ka*(Vd_unsat - Vd);
+
+				// park
+				V_alpha = Vd * _cos - Vq * _sin;
+				V_beta  = Vd * _sin + Vq * _cos;
+			}
+
+			SVPWM(V_alpha, V_beta);
+
+			V_injected = -V_injected; // injection with half of sampling freq
+
+			HAL_GPIO_WritePin(GPIOC, GPIO_PIN_4, 0);
+			//uint32_t debug_time_end = dwt_now();
+			//real_us = cycles_to_us(debug_time_end - debug_time_start);
+		}
+		else{
+			SVPWM(0.0,0.0);
+		}
+	}
+	return;
+}
+
+
+void set_ccr(uint16_t a, uint16_t b, uint16_t c){
+    TIM1->CCR1 = a; TIM1->CCR2 = b; TIM1->CCR3 = c;
+}
+
+static inline uint16_t clamp_u16_i32(int32_t x, uint16_t lo, uint16_t hi){
+    if (x < (int32_t)lo) return lo;
+    if (x > (int32_t)hi) return hi;
+    return (uint16_t)x;
+}
+
+static inline int8_t sign_hyst(float x, float eps){
+    if (x >  eps) return +1;
+    if (x < -eps) return -1;
+    return 0;
+}
+
+#define dt_ticks    	  (16.8f)
+#define I_EPS             (0.05f)
+#define SQRT3_BY_2        (0.8660254037844386f)
+static int8_t sa_last=0, sb_last=0, sc_last=0;
+
+static inline int8_t sign_hold(float x, float eps, int8_t *last){
+    if (x >  eps) { *last = +1; return +1; }
+    if (x < -eps) { *last = -1; return -1; }
+    return *last; // deadband 안에서는 직전 부호 유지
+}
+
+void SVPWM(float Valpha, float Vbeta){
+    float Vmag;
+    arm_sqrt_f32(Valpha*Valpha + Vbeta*Vbeta, &Vmag);
+
+    if (Vmag < 1e-6f) {
+        set_ccr(ARR_TICKS, ARR_TICKS, ARR_TICKS);
+        return;
+    }
+
+    float M = 1.73205080f * (Vmag / V_BUS);
+    if (M > 0.99f) M = 0.99f;
+
+    float ang = cordic_atan2_rad(Vbeta, Valpha);
+    if (ang < 0) ang += 6.2831853f;
+
+    uint8_t k = (uint8_t)(ang / SECTOR_RAD);
+    if (k >= 6) k = 0;
+
+    float phi = ang - k*SECTOR_RAD;
+
+    float T1 = M * arm_sin_f32(SECTOR_RAD - phi);
+    float T2 = M * arm_sin_f32(phi);
+
+    int32_t t1 = (int32_t)(ARR_TICKS * T1);
+    int32_t t2 = (int32_t)(ARR_TICKS * T2);
+
+    int32_t t0 = (ARR_TICKS - t1 - t2) >> 1;
+    if (t0 < 0) t0 = 0;
+
+    uint16_t Ua, Ub, Uc;
+    switch (k){
+        case 0: Ua=t1+t2+t0; Ub=t2+t0;     Uc=t0;            break;
+        case 1: Ua=t1+t0;    Ub=t1+t2+t0;  Uc=t0;            break;
+        case 2: Ua=t0;       Ub=t1+t2+t0;  Uc=t2+t0;         break;
+        case 3: Ua=t0;       Ub=t1+t0;     Uc=t1+t2+t0;      break;
+        case 4: Ua=t2+t0;    Ub=t0;        Uc=t1+t2+t0;      break;
+        default:Ua=t1+t2+t0; Ub=t0;        Uc=t1+t0;         break;
+    }
+
+    // deadtime compensation
+    float ia_deadtime = i_alpha_LPF;
+    float ib_deadtime = -0.5f * i_alpha_LPF + SQRT3_BY_2 * i_beta_LPF;
+    float ic_deadtime = -0.5f * i_alpha_LPF - SQRT3_BY_2 * i_beta_LPF;
+
+    int8_t sa = sign_hold(ia_deadtime, I_EPS, &sa_last);
+    int8_t sb = sign_hold(ib_deadtime, I_EPS, &sb_last);
+    int8_t sc = sign_hold(ic_deadtime, I_EPS, &sc_last);
+    int32_t duA = (int32_t) ((float)sa * dt_ticks);
+    int32_t duB = (int32_t) ((float)sb * dt_ticks);
+    int32_t duC = (int32_t) ((float)sc * dt_ticks);
+
+    int32_t duM = (duA + duB + duC) / 3;
+    duA -= duM; duB -= duM; duC -= duM;
+
+    int32_t Ua_c = (int32_t)Ua + duA;
+    int32_t Ub_c = (int32_t)Ub + duB;
+    int32_t Uc_c = (int32_t)Uc + duC;
+
+    int32_t minU = Ua_c;
+    if (Ub_c < minU) minU = Ub_c;
+    if (Uc_c < minU) minU = Uc_c;
+    int32_t maxU = Ua_c;
+    if (Ub_c > maxU) maxU = Ub_c;
+    if (Uc_c > maxU) maxU = Uc_c;
+    if (minU < 0) {
+        Ua_c -= minU; Ub_c -= minU; Uc_c -= minU;
+        maxU -= minU;
+    }
+    if (maxU > ARR_TICKS) {
+        int32_t sh = maxU - ARR_TICKS;
+        Ua_c -= sh; Ub_c -= sh; Uc_c -= sh;
+    }
+    Ua = clamp_u16_i32(Ua_c, 0, ARR_TICKS);
+    Ub = clamp_u16_i32(Ub_c, 0, ARR_TICKS);
+    Uc = clamp_u16_i32(Uc_c, 0, ARR_TICKS);
+    set_ccr(ARR_TICKS - Ua, ARR_TICKS - Ub, ARR_TICKS - Uc);
+}
+
+/*
+static inline float fmax3(float a,float b,float c){ float m=(a>b)?a:b; return (m>c)?m:c; }
+static inline float fmin3(float a,float b,float c){ float m=(a<b)?a:b; return (m<c)?m:c; }
+
+void SVPWM(float Valpha, float Vbeta)
+{
+    const float invVdc = 1.0f / V_BUS;
+
+    // phase-to-neutral normalized voltages
+    float va = (Valpha) * invVdc;
+    float vb = (-0.5f * Valpha + SQRT3_BY_2 * Vbeta) * invVdc;
+    float vc = (-0.5f * Valpha - SQRT3_BY_2 * Vbeta) * invVdc;
+
+    // SVPWM zero-sequence injection via min/max
+    float vmax = fmax3(va, vb, vc);
+    float vmin = fmin3(va, vb, vc);
+    float voff = -0.5f * (vmax + vmin);
+
+    va += voff; vb += voff; vc += voff;
+
+    // duty
+    float da = 0.5f + va;
+    float db = 0.5f + vb;
+    float dc = 0.5f + vc;
+
+    // clamp
+    if (da < 0.0f) da = 0.0f; else if (da > 1.0f) da = 1.0f;
+    if (db < 0.0f) db = 0.0f; else if (db > 1.0f) db = 1.0f;
+    if (dc < 0.0f) dc = 0.0f; else if (dc > 1.0f) dc = 1.0f;
+
+    uint16_t Ua = (uint16_t)(da * (float)ARR_TICKS);
+    uint16_t Ub = (uint16_t)(db * (float)ARR_TICKS);
+    uint16_t Uc = (uint16_t)(dc * (float)ARR_TICKS);
+
+    // ----- 기존 deadtime compensation 그대로 -----
+    float ia_deadtime = i_alpha_LPF;
+    float ib_deadtime = -0.5f * i_alpha_LPF + SQRT3_BY_2 * i_beta_LPF;
+    float ic_deadtime = -0.5f * i_alpha_LPF - SQRT3_BY_2 * i_beta_LPF;
+
+    int8_t sa = sign_hold(ia_deadtime, I_EPS, &sa_last);
+    int8_t sb = sign_hold(ib_deadtime, I_EPS, &sb_last);
+    int8_t sc = sign_hold(ic_deadtime, I_EPS, &sc_last);
+
+    int32_t duA = (int32_t)((float)sa * dt_ticks);
+    int32_t duB = (int32_t)((float)sb * dt_ticks);
+    int32_t duC = (int32_t)((float)sc * dt_ticks);
+
+    int32_t duM = (duA + duB + duC) / 3;
+    duA -= duM; duB -= duM; duC -= duM;
+
+    int32_t Ua_c = (int32_t)Ua + duA;
+    int32_t Ub_c = (int32_t)Ub + duB;
+    int32_t Uc_c = (int32_t)Uc + duC;
+
+    int32_t minU = Ua_c;
+    if (Ub_c < minU) minU = Ub_c;
+    if (Uc_c < minU) minU = Uc_c;
+    int32_t maxU = Ua_c;
+    if (Ub_c > maxU) maxU = Ub_c;
+    if (Uc_c > maxU) maxU = Uc_c;
+
+    if (minU < 0) {
+        Ua_c -= minU; Ub_c -= minU; Uc_c -= minU;
+        maxU -= minU;
+    }
+    if (maxU > ARR_TICKS) {
+        int32_t sh = maxU - ARR_TICKS;
+        Ua_c -= sh; Ub_c -= sh; Uc_c -= sh;
+    }
+
+    Ua = clamp_u16_i32(Ua_c, 0, ARR_TICKS);
+    Ub = clamp_u16_i32(Ub_c, 0, ARR_TICKS);
+    Uc = clamp_u16_i32(Uc_c, 0, ARR_TICKS);
+
+    set_ccr(ARR_TICKS - Ua, ARR_TICKS - Ub, ARR_TICKS - Uc);
+}*/
+
+/* CAN Rx ISR start */
+void HAL_CAN_RxFifo0MsgPendingCallback(FDCAN_HandleTypeDef *CanHandle){
+	if(CanHandle->Instance == FDCAN2){
+		CAN_receive_status = (HAL_FDCAN_GetRxMessage(CanHandle, FDCAN_RX_FIFO0, &Rx_Header, Rx_Data) == HAL_OK);
+	}
+}
+/* CAN Rx ISR end */
+
+
+/* USER CODE END 0 */
+
+/**
+  * @brief  The application entry point.
+  * @retval int
+  */
+int main(void)
+{
+
+  /* USER CODE BEGIN 1 */
+
+  /* USER CODE END 1 */
+
+  /* MCU Configuration--------------------------------------------------------*/
+
+  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
+  HAL_Init();
+
+  /* USER CODE BEGIN Init */
+
+  /* USER CODE END Init */
+
+  /* Configure the system clock */
+  SystemClock_Config();
+
+  /* USER CODE BEGIN SysInit */
+
+  /* USER CODE END SysInit */
+
+  /* Initialize all configured peripherals */
+  MX_GPIO_Init();
+  MX_DMA_Init();
+  MX_FDCAN2_Init();
+  MX_TIM1_Init();
+  MX_SPI1_Init();
+  MX_ADC2_Init();
+  MX_ADC3_Init();
+  MX_SPI3_Init();
+  MX_ADC1_Init();
+  MX_CORDIC_Init();
+  /* USER CODE BEGIN 2 */
+
+  DWT_Init();
+  CORDIC_Init_Phase();
+
+  // ADC calibration
+  ADC_cali_status |= (HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED) == HAL_OK) << 2;
+  ADC_cali_status |= (HAL_ADCEx_Calibration_Start(&hadc2, ADC_SINGLE_ENDED) == HAL_OK) << 1;
+  ADC_cali_status |= (HAL_ADCEx_Calibration_Start(&hadc3, ADC_SINGLE_ENDED) == HAL_OK);
+
+  // TIM 1 start
+  PWM_ADC_status |= (HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1) == HAL_OK) << 7;
+  PWM_ADC_status |= (HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2) == HAL_OK) << 6;
+  PWM_ADC_status |= (HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_3) == HAL_OK) << 5;
+  TIM1->CCR1 = ARR_TICKS;
+  TIM1->CCR2 = ARR_TICKS;
+  TIM1->CCR3 = ARR_TICKS;
+
+/*
+  // CAN filter
+  sFilter.IdType       = FDCAN_STANDARD_ID;          // 11-bit
+  sFilter.FilterIndex  = 0;                          // 0 ~ (StdFiltersNbr-1)
+  sFilter.FilterType   = FDCAN_FILTER_MASK;          // ID + MASK 방식
+  sFilter.FilterConfig = FDCAN_FILTER_TO_RXFIFO0;    // 목적지 = FIFO0
+  sFilter.FilterID1    = 0x01 << 5;                  // 비교 값 (좌시프트 5)
+  sFilter.FilterID2    = 0x7FF << 5;                 // MASK = 0x7FF → 완전 일치
+
+  HAL_FDCAN_ConfigFilter(&hfdcan2, &sFilter);
+
+  FDCAN_GlobalFilterTypeDef gFilter = {
+      .NonMatchingStd  = FDCAN_REJECT,               // 기타 STD 거부
+      .NonMatchingExt  = FDCAN_REJECT,               // EXT 거부
+      .RejectRemoteStd = 1,                          // 필요 시 0으로
+      .RejectRemoteExt = 1
+  };
+  HAL_FDCAN_ConfigGlobalFilter(&hfdcan2, &gFilter);
+*/
+
+  HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_6);  // blue LED
+  HAL_Delay(500);
+  HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_15); // red LED
+  HAL_Delay(500);
+  HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_6);  // blue LED
+  HAL_Delay(500);
+  HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_15); // red LED
+
+  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_4, 1);  // AS5048 nCS HIGH
+  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_14, 1); // DRV8353 enable
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_10, 1); // DRV8353 nCS HIGH
+  HAL_Delay(10);
+
+  DRV8353_errorflag_reset();
+  DRV8353_SPI_read();
+  DRV8353_SPI_setting();
+  DRV8353_SPI_read();
+  DRV8353_status = DRV8353_issetuped();
+
+  // ADC 1,2,3 start
+  PWM_ADC_status |= (HAL_ADC_Start_DMA(&hadc1, (uint32_t*)current_A, 1) == HAL_OK) << 3;
+  PWM_ADC_status |= (HAL_ADC_Start_DMA(&hadc2, (uint32_t*)current_B, 1) == HAL_OK) << 2;
+  PWM_ADC_status |= (HAL_ADC_Start_DMA(&hadc3, (uint32_t*)current_C, 1) == HAL_OK) << 1;
+
+  if(PWM_ADC_status == 0xEE){
+	  printf("PWM ADC pass");
+	  if(DRV8353_status == 0xFF){
+		  printf("DRV pass");
+		  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, 1); // blue LED
+
+		  HAL_Delay(1000);
+
+		  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_15, 1); // motor HI-Z
+
+		  PWM_ADC_status |= (HAL_TIM_Base_Start_IT(&htim1) == HAL_OK) << 4;
+		  PWM_ADC_status |= (PWM_ADC_status == 0xFE);
+	  }
+	  else{
+		  HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_15);
+		  while (1){
+			  HAL_Delay(500);
+			  DRV8353_errorflag_reset();
+			  DRV8353_SPI_read();
+		  }
+	  }
+  }
+  else{
+ 	  while (1){
+ 		  HAL_Delay(1000);
+ 	  	  HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_15);
+ 	  }
+   }
+
+  /* USER CODE END 2 */
+
+  /* Infinite loop */
+  /* USER CODE BEGIN WHILE */
+  while (1)
+  {
+    /* USER CODE END WHILE */
+
+    /* USER CODE BEGIN 3 */
+	  /*if(log_dump){
+		  if(log_num < 5000){
+			  swv_csv(log_num, log_1[log_num], log_2[log_num], log_3[log_num], log_4[log_num], log_5[log_num]);
+			  log_num++;
+		  }
+	  }*/
+  }
+  /* USER CODE END 3 */
+}
+
+/**
+  * @brief System Clock Configuration
+  * @retval None
+  */
+void SystemClock_Config(void)
+{
+  RCC_OscInitTypeDef RCC_OscInitStruct = {0};
+  RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+
+  /** Configure the main internal regulator output voltage
+  */
+  HAL_PWREx_ControlVoltageScaling(PWR_REGULATOR_VOLTAGE_SCALE1_BOOST);
+
+  /** Initializes the RCC Oscillators according to the specified parameters
+  * in the RCC_OscInitTypeDef structure.
+  */
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
+  RCC_OscInitStruct.HSIState = RCC_HSI_ON;
+  RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
+  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
+  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI;
+  RCC_OscInitStruct.PLL.PLLM = RCC_PLLM_DIV2;
+  RCC_OscInitStruct.PLL.PLLN = 42;
+  RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
+  RCC_OscInitStruct.PLL.PLLQ = RCC_PLLQ_DIV2;
+  RCC_OscInitStruct.PLL.PLLR = RCC_PLLR_DIV2;
+  if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Initializes the CPU, AHB and APB buses clocks
+  */
+  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
+                              |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
+  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
+  RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
+  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;
+  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV2;
+
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_4) != HAL_OK)
+  {
+    Error_Handler();
+  }
+}
+
+/**
+  * @brief ADC1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_ADC1_Init(void)
+{
+
+  /* USER CODE BEGIN ADC1_Init 0 */
+
+  /* USER CODE END ADC1_Init 0 */
+
+  ADC_MultiModeTypeDef multimode = {0};
+  ADC_ChannelConfTypeDef sConfig = {0};
+
+  /* USER CODE BEGIN ADC1_Init 1 */
+
+  /* USER CODE END ADC1_Init 1 */
+
+  /** Common config
+  */
+  hadc1.Instance = ADC1;
+  hadc1.Init.ClockPrescaler = ADC_CLOCK_SYNC_PCLK_DIV4;
+  hadc1.Init.Resolution = ADC_RESOLUTION_12B;
+  hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;
+  hadc1.Init.GainCompensation = 0;
+  hadc1.Init.ScanConvMode = ADC_SCAN_DISABLE;
+  hadc1.Init.EOCSelection = ADC_EOC_SINGLE_CONV;
+  hadc1.Init.LowPowerAutoWait = DISABLE;
+  hadc1.Init.ContinuousConvMode = DISABLE;
+  hadc1.Init.NbrOfConversion = 1;
+  hadc1.Init.DiscontinuousConvMode = DISABLE;
+  hadc1.Init.ExternalTrigConv = ADC_EXTERNALTRIG_T1_TRGO2;
+  hadc1.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_RISING;
+  hadc1.Init.DMAContinuousRequests = ENABLE;
+  hadc1.Init.Overrun = ADC_OVR_DATA_PRESERVED;
+  hadc1.Init.OversamplingMode = DISABLE;
+  if (HAL_ADC_Init(&hadc1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure the ADC multi-mode
+  */
+  multimode.Mode = ADC_MODE_INDEPENDENT;
+  if (HAL_ADCEx_MultiModeConfigChannel(&hadc1, &multimode) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure Regular Channel
+  */
+  sConfig.Channel = ADC_CHANNEL_1;
+  sConfig.Rank = ADC_REGULAR_RANK_1;
+  sConfig.SamplingTime = ADC_SAMPLETIME_12CYCLES_5;
+  sConfig.SingleDiff = ADC_SINGLE_ENDED;
+  sConfig.OffsetNumber = ADC_OFFSET_NONE;
+  sConfig.Offset = 0;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN ADC1_Init 2 */
+
+  /* USER CODE END ADC1_Init 2 */
+
+}
+
+/**
+  * @brief ADC2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_ADC2_Init(void)
+{
+
+  /* USER CODE BEGIN ADC2_Init 0 */
+
+  /* USER CODE END ADC2_Init 0 */
+
+  ADC_ChannelConfTypeDef sConfig = {0};
+
+  /* USER CODE BEGIN ADC2_Init 1 */
+
+  /* USER CODE END ADC2_Init 1 */
+
+  /** Common config
+  */
+  hadc2.Instance = ADC2;
+  hadc2.Init.ClockPrescaler = ADC_CLOCK_SYNC_PCLK_DIV4;
+  hadc2.Init.Resolution = ADC_RESOLUTION_12B;
+  hadc2.Init.DataAlign = ADC_DATAALIGN_RIGHT;
+  hadc2.Init.GainCompensation = 0;
+  hadc2.Init.ScanConvMode = ADC_SCAN_DISABLE;
+  hadc2.Init.EOCSelection = ADC_EOC_SINGLE_CONV;
+  hadc2.Init.LowPowerAutoWait = DISABLE;
+  hadc2.Init.ContinuousConvMode = DISABLE;
+  hadc2.Init.NbrOfConversion = 1;
+  hadc2.Init.DiscontinuousConvMode = DISABLE;
+  hadc2.Init.ExternalTrigConv = ADC_EXTERNALTRIG_T1_TRGO2;
+  hadc2.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_RISING;
+  hadc2.Init.DMAContinuousRequests = ENABLE;
+  hadc2.Init.Overrun = ADC_OVR_DATA_PRESERVED;
+  hadc2.Init.OversamplingMode = DISABLE;
+  if (HAL_ADC_Init(&hadc2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure Regular Channel
+  */
+  sConfig.Channel = ADC_CHANNEL_2;
+  sConfig.Rank = ADC_REGULAR_RANK_1;
+  sConfig.SamplingTime = ADC_SAMPLETIME_12CYCLES_5;
+  sConfig.SingleDiff = ADC_SINGLE_ENDED;
+  sConfig.OffsetNumber = ADC_OFFSET_NONE;
+  sConfig.Offset = 0;
+  if (HAL_ADC_ConfigChannel(&hadc2, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN ADC2_Init 2 */
+
+  /* USER CODE END ADC2_Init 2 */
+
+}
+
+/**
+  * @brief ADC3 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_ADC3_Init(void)
+{
+
+  /* USER CODE BEGIN ADC3_Init 0 */
+
+  /* USER CODE END ADC3_Init 0 */
+
+  ADC_MultiModeTypeDef multimode = {0};
+  ADC_ChannelConfTypeDef sConfig = {0};
+
+  /* USER CODE BEGIN ADC3_Init 1 */
+
+  /* USER CODE END ADC3_Init 1 */
+
+  /** Common config
+  */
+  hadc3.Instance = ADC3;
+  hadc3.Init.ClockPrescaler = ADC_CLOCK_SYNC_PCLK_DIV4;
+  hadc3.Init.Resolution = ADC_RESOLUTION_12B;
+  hadc3.Init.DataAlign = ADC_DATAALIGN_RIGHT;
+  hadc3.Init.GainCompensation = 0;
+  hadc3.Init.ScanConvMode = ADC_SCAN_DISABLE;
+  hadc3.Init.EOCSelection = ADC_EOC_SINGLE_CONV;
+  hadc3.Init.LowPowerAutoWait = DISABLE;
+  hadc3.Init.ContinuousConvMode = DISABLE;
+  hadc3.Init.NbrOfConversion = 1;
+  hadc3.Init.DiscontinuousConvMode = DISABLE;
+  hadc3.Init.ExternalTrigConv = ADC_EXTERNALTRIG_T1_TRGO2;
+  hadc3.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_RISING;
+  hadc3.Init.DMAContinuousRequests = ENABLE;
+  hadc3.Init.Overrun = ADC_OVR_DATA_PRESERVED;
+  hadc3.Init.OversamplingMode = DISABLE;
+  if (HAL_ADC_Init(&hadc3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure the ADC multi-mode
+  */
+  multimode.Mode = ADC_MODE_INDEPENDENT;
+  if (HAL_ADCEx_MultiModeConfigChannel(&hadc3, &multimode) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure Regular Channel
+  */
+  sConfig.Channel = ADC_CHANNEL_1;
+  sConfig.Rank = ADC_REGULAR_RANK_1;
+  sConfig.SamplingTime = ADC_SAMPLETIME_12CYCLES_5;
+  sConfig.SingleDiff = ADC_SINGLE_ENDED;
+  sConfig.OffsetNumber = ADC_OFFSET_NONE;
+  sConfig.Offset = 0;
+  if (HAL_ADC_ConfigChannel(&hadc3, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN ADC3_Init 2 */
+
+  /* USER CODE END ADC3_Init 2 */
+
+}
+
+/**
+  * @brief CORDIC Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_CORDIC_Init(void)
+{
+
+  /* USER CODE BEGIN CORDIC_Init 0 */
+
+  /* USER CODE END CORDIC_Init 0 */
+
+  /* USER CODE BEGIN CORDIC_Init 1 */
+
+  /* USER CODE END CORDIC_Init 1 */
+  hcordic.Instance = CORDIC;
+  if (HAL_CORDIC_Init(&hcordic) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN CORDIC_Init 2 */
+
+  /* USER CODE END CORDIC_Init 2 */
+
+}
+
+/**
+  * @brief FDCAN2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_FDCAN2_Init(void)
+{
+
+  /* USER CODE BEGIN FDCAN2_Init 0 */
+
+  /* USER CODE END FDCAN2_Init 0 */
+
+  /* USER CODE BEGIN FDCAN2_Init 1 */
+
+  /* USER CODE END FDCAN2_Init 1 */
+  hfdcan2.Instance = FDCAN2;
+  hfdcan2.Init.ClockDivider = FDCAN_CLOCK_DIV1;
+  hfdcan2.Init.FrameFormat = FDCAN_FRAME_CLASSIC;
+  hfdcan2.Init.Mode = FDCAN_MODE_NORMAL;
+  hfdcan2.Init.AutoRetransmission = ENABLE;
+  hfdcan2.Init.TransmitPause = DISABLE;
+  hfdcan2.Init.ProtocolException = DISABLE;
+  hfdcan2.Init.NominalPrescaler = 6;
+  hfdcan2.Init.NominalSyncJumpWidth = 1;
+  hfdcan2.Init.NominalTimeSeg1 = 11;
+  hfdcan2.Init.NominalTimeSeg2 = 2;
+  hfdcan2.Init.DataPrescaler = 1;
+  hfdcan2.Init.DataSyncJumpWidth = 1;
+  hfdcan2.Init.DataTimeSeg1 = 1;
+  hfdcan2.Init.DataTimeSeg2 = 1;
+  hfdcan2.Init.StdFiltersNbr = 0;
+  hfdcan2.Init.ExtFiltersNbr = 0;
+  hfdcan2.Init.TxFifoQueueMode = FDCAN_TX_FIFO_OPERATION;
+  if (HAL_FDCAN_Init(&hfdcan2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN FDCAN2_Init 2 */
+
+  /* USER CODE END FDCAN2_Init 2 */
+
+}
+
+/**
+  * @brief SPI1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_SPI1_Init(void)
+{
+
+  /* USER CODE BEGIN SPI1_Init 0 */
+
+  /* USER CODE END SPI1_Init 0 */
+
+  /* USER CODE BEGIN SPI1_Init 1 */
+
+  /* USER CODE END SPI1_Init 1 */
+  /* SPI1 parameter configuration*/
+  hspi1.Instance = SPI1;
+  hspi1.Init.Mode = SPI_MODE_MASTER;
+  hspi1.Init.Direction = SPI_DIRECTION_2LINES;
+  hspi1.Init.DataSize = SPI_DATASIZE_16BIT;
+  hspi1.Init.CLKPolarity = SPI_POLARITY_LOW;
+  hspi1.Init.CLKPhase = SPI_PHASE_2EDGE;
+  hspi1.Init.NSS = SPI_NSS_SOFT;
+  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_4;
+  hspi1.Init.FirstBit = SPI_FIRSTBIT_MSB;
+  hspi1.Init.TIMode = SPI_TIMODE_DISABLE;
+  hspi1.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
+  hspi1.Init.CRCPolynomial = 7;
+  hspi1.Init.CRCLength = SPI_CRC_LENGTH_DATASIZE;
+  hspi1.Init.NSSPMode = SPI_NSS_PULSE_DISABLE;
+  if (HAL_SPI_Init(&hspi1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN SPI1_Init 2 */
+
+  /* USER CODE END SPI1_Init 2 */
+
+}
+
+/**
+  * @brief SPI3 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_SPI3_Init(void)
+{
+
+  /* USER CODE BEGIN SPI3_Init 0 */
+
+  /* USER CODE END SPI3_Init 0 */
+
+  /* USER CODE BEGIN SPI3_Init 1 */
+
+  /* USER CODE END SPI3_Init 1 */
+  /* SPI3 parameter configuration*/
+  hspi3.Instance = SPI3;
+  hspi3.Init.Mode = SPI_MODE_MASTER;
+  hspi3.Init.Direction = SPI_DIRECTION_2LINES;
+  hspi3.Init.DataSize = SPI_DATASIZE_16BIT;
+  hspi3.Init.CLKPolarity = SPI_POLARITY_LOW;
+  hspi3.Init.CLKPhase = SPI_PHASE_2EDGE;
+  hspi3.Init.NSS = SPI_NSS_SOFT;
+  hspi3.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_64;
+  hspi3.Init.FirstBit = SPI_FIRSTBIT_MSB;
+  hspi3.Init.TIMode = SPI_TIMODE_DISABLE;
+  hspi3.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
+  hspi3.Init.CRCPolynomial = 7;
+  hspi3.Init.CRCLength = SPI_CRC_LENGTH_DATASIZE;
+  hspi3.Init.NSSPMode = SPI_NSS_PULSE_DISABLE;
+  if (HAL_SPI_Init(&hspi3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN SPI3_Init 2 */
+
+  /* USER CODE END SPI3_Init 2 */
+
+}
+
+/**
+  * @brief TIM1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM1_Init(void)
+{
+
+  /* USER CODE BEGIN TIM1_Init 0 */
+
+  /* USER CODE END TIM1_Init 0 */
+
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+  TIM_OC_InitTypeDef sConfigOC = {0};
+  TIM_BreakDeadTimeConfigTypeDef sBreakDeadTimeConfig = {0};
+
+  /* USER CODE BEGIN TIM1_Init 1 */
+
+  /* USER CODE END TIM1_Init 1 */
+  htim1.Instance = TIM1;
+  htim1.Init.Prescaler = 1-1;
+  htim1.Init.CounterMode = TIM_COUNTERMODE_CENTERALIGNED1;
+  htim1.Init.Period = 4199;
+  htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim1.Init.RepetitionCounter = 2-1;
+  htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_PWM_Init(&htim1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterOutputTrigger2 = TIM_TRGO2_UPDATE;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim1, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sConfigOC.OCMode = TIM_OCMODE_PWM2;
+  sConfigOC.Pulse = 0;
+  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+  sConfigOC.OCNPolarity = TIM_OCNPOLARITY_HIGH;
+  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+  sConfigOC.OCIdleState = TIM_OCIDLESTATE_RESET;
+  sConfigOC.OCNIdleState = TIM_OCNIDLESTATE_RESET;
+  if (HAL_TIM_PWM_ConfigChannel(&htim1, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_PWM_ConfigChannel(&htim1, &sConfigOC, TIM_CHANNEL_2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_PWM_ConfigChannel(&htim1, &sConfigOC, TIM_CHANNEL_3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sBreakDeadTimeConfig.OffStateRunMode = TIM_OSSR_DISABLE;
+  sBreakDeadTimeConfig.OffStateIDLEMode = TIM_OSSI_DISABLE;
+  sBreakDeadTimeConfig.LockLevel = TIM_LOCKLEVEL_OFF;
+  sBreakDeadTimeConfig.DeadTime = 0;
+  sBreakDeadTimeConfig.BreakState = TIM_BREAK_DISABLE;
+  sBreakDeadTimeConfig.BreakPolarity = TIM_BREAKPOLARITY_HIGH;
+  sBreakDeadTimeConfig.BreakFilter = 0;
+  sBreakDeadTimeConfig.BreakAFMode = TIM_BREAK_AFMODE_INPUT;
+  sBreakDeadTimeConfig.Break2State = TIM_BREAK2_DISABLE;
+  sBreakDeadTimeConfig.Break2Polarity = TIM_BREAK2POLARITY_HIGH;
+  sBreakDeadTimeConfig.Break2Filter = 0;
+  sBreakDeadTimeConfig.Break2AFMode = TIM_BREAK_AFMODE_INPUT;
+  sBreakDeadTimeConfig.AutomaticOutput = TIM_AUTOMATICOUTPUT_DISABLE;
+  if (HAL_TIMEx_ConfigBreakDeadTime(&htim1, &sBreakDeadTimeConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM1_Init 2 */
+
+  /* USER CODE END TIM1_Init 2 */
+  HAL_TIM_MspPostInit(&htim1);
+
+}
+
+/**
+  * Enable DMA controller clock
+  */
+static void MX_DMA_Init(void)
+{
+
+  /* DMA controller clock enable */
+  __HAL_RCC_DMAMUX1_CLK_ENABLE();
+  __HAL_RCC_DMA1_CLK_ENABLE();
+
+  /* DMA interrupt init */
+  /* DMA1_Channel1_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Channel1_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Channel1_IRQn);
+  /* DMA1_Channel2_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Channel2_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Channel2_IRQn);
+  /* DMA1_Channel3_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Channel3_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Channel3_IRQn);
+
+}
+
+/**
+  * @brief GPIO Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_GPIO_Init(void)
+{
+  GPIO_InitTypeDef GPIO_InitStruct = {0};
+  /* USER CODE BEGIN MX_GPIO_Init_1 */
+  /* USER CODE END MX_GPIO_Init_1 */
+
+  /* GPIO Ports Clock Enable */
+  __HAL_RCC_GPIOC_CLK_ENABLE();
+  __HAL_RCC_GPIOA_CLK_ENABLE();
+  __HAL_RCC_GPIOB_CLK_ENABLE();
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOC, motor_enable_Pin|motor_HI_Z_Pin|SPI_CS_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOB, DRV_CS_Pin|LED3_blue_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(LED1_red_GPIO_Port, LED1_red_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pins : motor_enable_Pin motor_HI_Z_Pin SPI_CS_Pin */
+  GPIO_InitStruct.Pin = motor_enable_Pin|motor_HI_Z_Pin|SPI_CS_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : DRV_CS_Pin */
+  GPIO_InitStruct.Pin = DRV_CS_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+  HAL_GPIO_Init(DRV_CS_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : DRV_fault_Pin */
+  GPIO_InitStruct.Pin = DRV_fault_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(DRV_fault_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : LED1_red_Pin */
+  GPIO_InitStruct.Pin = LED1_red_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(LED1_red_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : LED3_blue_Pin */
+  GPIO_InitStruct.Pin = LED3_blue_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(LED3_blue_GPIO_Port, &GPIO_InitStruct);
+
+  /* USER CODE BEGIN MX_GPIO_Init_2 */
+  /* USER CODE END MX_GPIO_Init_2 */
+}
+
+/* USER CODE BEGIN 4 */
+
+
+
+/* USER CODE END 4 */
+
+/**
+  * @brief  This function is executed in case of error occurrence.
+  * @retval None
+  */
+void Error_Handler(void)
+{
+  /* USER CODE BEGIN Error_Handler_Debug */
+  /* User can add his own implementation to report the HAL error return state */
+  __disable_irq();
+  while (1){
+
+  }
+  /* USER CODE END Error_Handler_Debug */
+}
+#ifdef USE_FULL_ASSERT
+/**
+  * @brief  Reports the name of the source file and the source line number
+  *         where the assert_param error has occurred.
+  * @param  file: pointer to the source file name
+  * @param  line: assert_param error line source number
+  * @retval None
+  */
+void assert_failed(uint8_t *file, uint32_t line)
+{
+  /* USER CODE BEGIN 6 */
+  /* User can add his own implementation to report the file name and line number,
+     ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
+  /* USER CODE END 6 */
+}
+#endif /* USE_FULL_ASSERT */
