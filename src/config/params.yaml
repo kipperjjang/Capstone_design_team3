@@ -5,11 +5,11 @@ vision:
 
 # Controller parameters 
 controller:
-  image_offset:           [0.0, 10.0]
+  image_offset:           [0.0, 30.0]
   pixel_offset:           [0.0, 0.0]
   edge_joint_threshold:   [5e-2, 1e-2]
-  vel_norm_threshold:      5e-2
-  Kp:                     [0.0002 , -0.0005] 
+  vel_norm_threshold:     1e-1
+  Kp:                     [0.003 , -0.0005] 
   Kd:                     [0.000, 0.00]
   
   frequency:              50        # Frequency of the control node
@@ -18,7 +18,7 @@ controller:
   picam_track_hold_sec:   1.0         # Max duration to hold current joint before webcam handoff
   webcam_measurement_max_age: 0.5     # Max age of webcam YOLO measurement for search
   picam_lpf_enabled:      true        # Smooth picam YOLO pixel jitter before pixel control
-  picam_lpf_alpha:        0.3         # filtered = alpha * previous + (1-alpha) * measurement
+  picam_lpf_alpha:        0.2         # filtered = alpha * previous + (1-alpha) * measurement
   picam_lpf_reset_gap_sec: 0.25       # Reset LPF after long picam detection gap
 
 # Serial parameters

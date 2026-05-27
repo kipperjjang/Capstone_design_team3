@@ -59,7 +59,7 @@ void CtrlNode::jointCallback(const custom_msgs::msg::JointMsg::SharedPtr msg) {
   const double alpha = 0.3;
 
   joint_ = alpha * joint_ + (1-alpha) * toEigen(msg->joint);
-  joint_vel_ = alpha * joint_ + (1-alpha) * toEigen(msg->joint_vel);
+  joint_vel_ = alpha * joint_vel_ + (1-alpha) * toEigen(msg->joint_vel);
 
   joint_buffer_ = joint_buffer_ + joint_vel_;
   joint_mean_ = joint_buffer_ / count;
@@ -272,42 +272,42 @@ void CtrlNode::decideFire(const RobotState &state, ControlState &control) {
   double bbox_half_height = bbox_half_size(1);
   
   // Pixel error check (box)
-  Eigen::Vector2d pixel_error = (state.p - state.img_center).cwiseAbs();
+  Eigen::Vector2d pixel_error = (state.p - config.img_offset - state.img_center).cwiseAbs();
   // if (pixel_error(0) < bbox_half_width && pixel_error(1) < bbox_half_height) {
-  //   fire &= true;
+  //   fire &= true;:w
   // } else {
   //   fire &= false;
   // }
 
   // Pixel error check (circle)
-  if (pixel_error.norm() < std::min(bbox_half_width, bbox_half_height)) {
-    fire &= true;
-  } else {
-    fire &= false;
-  }
+  // const double length = std::min(bbox_half_width, bbox_half_height);
+  // if (pixel_error.norm() < length) {// && pixel_error.norm() > 0.1 * length ) {
+  //   fire &= true;
+  // } else {
+  //   fire &= false;
+  // }
 
   // std::cout << "1\t" << fire;
 
   // Joint velocity에 따라 offset (buffer 0.5s); 
   // std::cout << joint_mean_.transpose() << std::endl;
   
-  if (joint_vel_(1) < -config.edge_joint_threshold(1)) {
-    control.u_pitch = control.u_pitch + config.pixel_offset(1);
-  }
+  // if (joint_vel_(1) < 0.0) {
+  //   control.u_pitch = control.u_pitch + config.pixel_offset(1);
+  // }
   // else if (joint_mean_(1) <= config.edge_joint_threshold(1)) {
   //   fire &= false;
   // }
 
-  // if (fire) {
   //   std::cout << "2\t" << fire;
-  if (joint_vel_(0) < config.edge_joint_threshold(0)) {
-    control.u_yaw = control.u_yaw - config.pixel_offset(0);
-  } else if (joint_vel_(0) > config.edge_joint_threshold(0)) {
-    control.u_yaw = control.u_yaw + config.pixel_offset(0);
-  } 
+  // if (joint_vel_(0) < config.edge_joint_threshold(0)) {
+  //   control.u_yaw = control.u_yaw - config.pixel_offset(0);
+  // } else if (joint_vel_(0) > config.edge_joint_threshold(0)) {
+  //   control.u_yaw = control.u_yaw + config.pixel_offset(0);
+  // } 
   
   // if (joint_vel_.norm() < config.vel_norm_threshold) {
-  //   fire &= false;
+  //    fire &= false;
   // }
   
   // std::cout << "3\t" << fire << std::endl;
@@ -336,7 +336,7 @@ CtrlNode::ControlTick CtrlNode::trackPicam(double now) {
     tick.state = withLatestJoint(RobotState());
   }
 
-  tick.control = controller_->computeWebcamAngleSearch(tick.state);
+  tick.control = controller_->computePicamPixelTrack(tick.state);
   decideFire(tick.state, tick.control);
   
   tick.state.camera = "picam";
