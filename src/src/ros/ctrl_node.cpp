@@ -284,7 +284,7 @@ void CtrlNode::decideFire(const RobotState &state, ControlState &control) {
   // if (pixel_error.norm() < length) {// && pixel_error.norm() > 0.1 * length ) {
   //   fire &= true;
   // } else {
-  //   fire &= false;
+  //   fire &= false
   // }
 
   // std::cout << "1\t" << fire;

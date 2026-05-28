@@ -89,7 +89,7 @@ Eigen::Vector2d computeBellAngle(const RobotState &state, const ControlConfig &c
   // Eigen::Vector2d omega = Jp * state.v + Jj * state.joint_vel;
 
   Eigen::Vector2d out;
-  out << alpha, 4 * beta;
+  out << 4*alpha, 4 * (beta) + 0.8;
   return out;
 }
 } // namespace
